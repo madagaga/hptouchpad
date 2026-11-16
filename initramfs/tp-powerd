@@ -1,0 +1,130 @@
+#!/bin/sh
+# Charge and power policy of the HP TouchPad (see STATUS.md, "Charging and battery"). Runs every 5 s.
+#
+# Source detection: the cable VBUS is on the charger DC input even from a PC port, so the USB device controller tells them apart:
+#   "not attached" = no USB host (wall adapter), any other state (a PC enumerates us) = PC port.
+# Automatic adjustment of the charge current: the input current of the MAX8903 (charge-mode) is raised one step at a time while the
+# source stays healthy, and lowered when it collapses:
+#   PC port   : usb (500 mA) -> 750 -> 900 mA        wall adapter : 900 -> 1400 mA
+#   a step up is tried after 20 s of stable operation (DC input valid, same source, charger health Good);
+#   if the input disappears or the charger reports a fault within 30 s of a step up, that step is too much for this source: the
+#   limit is lowered by one step and remembered (for the same kind of source while it comes back within 2 minutes).
+# Low battery while discharging: <= 15 % backlight 20 % and CPUs capped at their lowest frequency; <= 5 % without a cable: sync, media
+# volume read-only and power off (a sudden cut would corrupt the vfat volume of webOS and the rootfs file); <= 5 % on a cable: backlight
+# off, the battery charges (a cable always means charging, see below).
+# Charge window (settings panel, /mnt/media/touchpad/tpd.conf: charge_limit=1, charge_min, charge_max; off by default): the charger's
+# CEN pin (GPIO 41, high = charging enabled) goes low when the battery reaches charge_max and high again when it falls to charge_min;
+# with CEN low the input still powers the tablet. With a cable CEN is written every pass (high unless the window holds the charge);
+# without one it is left to the max8903 driver.
+# State for `tp power`: /tmp/tp-powerd.state
+P=/sys/class/power_supply
+LOW=15
+CRIT=5
+PC_STEPS="usb 750 900"
+WALL_STEPS="900 1400"
+lim_pc=3
+lim_wall=2
+class=none
+last_class=none
+idx=1
+stable=0
+last_up=0
+gone=0
+saved=0
+mode=
+hold=0
+crit_off=0
+CONF=/mnt/media/touchpad/tpd.conf
+CEN=$((0x801004 + 0x10 * 41))   # TLMM GPIO_IN_OUT of GPIO 41, bit 1 = output value
+
+log() { echo "tp-powerd: $*"; echo "tp-powerd: $*" > /dev/kmsg 2>/dev/null; }
+now() { cut -d. -f1 /proc/uptime; }
+steps() { case "$1" in pc) echo "$PC_STEPS" ;; wall) echo "$WALL_STEPS" ;; esac; }
+nth() { n=$1; shift; while [ "$n" -gt 1 ]; do shift; n=$((n - 1)); done; echo "$1"; }
+getlim() { case "$1" in pc) echo $lim_pc ;; wall) echo $lim_wall ;; esac; }
+setlim() { case "$1" in pc) lim_pc=$2 ;; wall) lim_wall=$2 ;; esac; }
+apply() {
+  m=$(nth $idx $(steps "$class"))
+  [ "$m" = "$mode" ] && return
+  mode=$m
+  charge-mode "$m" > /dev/null
+  log "$class: input current $m ($idx/$(getlim $class) allowed)"
+}
+
+while :; do
+  t=$(now)
+  online=$(cat $P/max8903_charger/online 2>/dev/null)
+  cap=$(cat $P/battery/capacity 2>/dev/null)
+  cur=$(cat $P/battery/current_now 2>/dev/null)
+  health=$(cat $P/max8903_charger/health 2>/dev/null)
+  [ -n "$cap" ] && [ -n "$cur" ] || { sleep 5; continue; }
+
+  if [ "$online" = 1 ]; then
+    if [ "$(cat /sys/class/udc/*/state 2>/dev/null)" = "not attached" ]; then c=wall; else c=pc; fi
+  else
+    c=none
+  fi
+
+  if [ "$c" = none ]; then
+    if [ "$class" != none ]; then
+      # input lost: right after a step up it means the source cannot give that much
+      if [ $((t - last_up)) -lt 30 ] && [ "$idx" -gt 1 ]; then
+        idx=$((idx - 1)); setlim "$class" $idx
+        log "$class: input lost after a step up, limit lowered to $idx"
+      fi
+      last_class=$class; gone=$t; class=none; mode=
+    fi
+  else
+    if [ "$c" != "$class" ]; then
+      # a source (re)appears: keep what we learned when the same kind comes back quickly
+      if [ "$c" = "$last_class" ] && [ $((t - gone)) -lt 120 ]; then idx=$(getlim $c); else setlim "$c" $(echo $(steps $c) | wc -w); idx=1; fi
+      [ "$idx" -gt "$(getlim $c)" ] && idx=$(getlim $c)
+      class=$c; stable=0; mode=
+      log "source detected: $class"
+      apply
+    elif [ "$health" != "Good" ] && [ "$idx" -gt 1 ]; then
+      idx=$((idx - 1)); setlim "$class" $idx; stable=0
+      log "$class: charger health $health, limit lowered to $idx"
+      apply
+    else
+      stable=$((stable + 1))
+      if [ "$stable" -ge 4 ] && [ "$idx" -lt "$(getlim $class)" ]; then
+        idx=$((idx + 1)); stable=0; last_up=$t
+        apply
+      fi
+    fi
+  fi
+  # charge window: hold = charging stopped because the battery reached charge_max, until it falls to charge_min
+  lim=$(sed -n 's/^charge_limit=//p' $CONF 2>/dev/null | tail -n1)
+  if [ "$lim" = 1 ]; then
+    cmin=$(sed -n 's/^charge_min=//p' $CONF 2>/dev/null | tail -n1); cmax=$(sed -n 's/^charge_max=//p' $CONF 2>/dev/null | tail -n1)
+    [ "$cap" -ge "${cmax:-80}" ] && [ "$hold" = 0 ] && { hold=1; log "battery $cap %: charge stopped (window ${cmin:-20}-${cmax:-80} %)"; }
+    [ "$cap" -le "${cmin:-20}" ] && [ "$hold" = 1 ] && { hold=0; log "battery $cap %: charge resumed (window ${cmin:-20}-${cmax:-80} %)"; }
+  elif [ "$hold" = 1 ]; then
+    hold=0; log "charge window off: charge resumed"
+  fi
+  # a cable means charging, whatever the battery level (also right after a boot on a nearly empty battery), unless the window holds it
+  [ "$online" = 1 ] && devmem $CEN 32 $([ "$hold" = 1 ] && echo 0 || echo 2) > /dev/null 2>&1
+  echo "class=$class mode=${mode:-none} step=$idx limit=$(getlim $class) udc=$(cat /sys/class/udc/*/state 2>/dev/null) health=$health hold=$hold" > /tmp/tp-powerd.state 2>/dev/null
+
+  if [ "$cur" -lt 0 ]; then   # discharging (also possible on a cable: a PC port gives less than the tablet draws)
+    # power off only without a cable: on a cable the battery charges (backlight off at the critical level to leave it the current)
+    if [ "$cap" -le "$CRIT" ] && [ "$online" = 1 ] && [ "$crit_off" = 0 ]; then
+      crit_off=1; log "battery $cap %: charging with the backlight off"; tp backlight 0 > /dev/null 2>&1
+    fi
+    if [ "$cap" -le "$CRIT" ] && [ "$online" != 1 ]; then
+      log "battery $cap %: powering off"
+      sync
+      mount -o remount,ro /mnt/media 2>/dev/null
+      sync
+      poweroff -f
+    fi
+    if [ "$cap" -le "$LOW" ] && [ "$saved" = 0 ]; then
+      saved=1
+      log "battery $cap %: power saving (backlight 20 %, CPU at the lowest frequency)"
+      tp backlight 20 > /dev/null 2>&1
+      for f in /sys/devices/system/cpu/cpu*/cpufreq; do cat $f/cpuinfo_min_freq > $f/scaling_max_freq 2>/dev/null; done
+    fi
+  fi
+  sleep 5
+done

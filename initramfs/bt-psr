@@ -1,0 +1,36 @@
+#!/bin/sh
+# Loads the BlueCore PSR (radio calibration: crystal trim, TX power table, PCM...) into the RAM of the
+# chip, then re-attaches it. Run bt-test first. The keys are written to the volatile PS RAM store only
+# (a power cycle restores the chip as it was). A warm reset of the chip is needed for the radio keys to
+# take effect (-r), which also drops the BCSP link: hciattach is run again without cycling the power.
+TTY=/dev/ttyMSM1
+# BD address of the tablet: the webOS token BToADDR (ASCII "xx:xx:xx:xx:xx:xx") in the tokens partition
+# (mmcblk0p12). PSKEY_BDADDR (0x0001) holds four words: LAP[23:16], LAP[15:0], UAP, NAP.
+ADDR=$(tr -cs ' -~' '\n' < /dev/mmcblk0p12 | grep -A1 'BToADDR$' | head -2 | tail -1)   # busybox tr has no [:print:]
+case "$ADDR" in
+  ??:??:??:??:??:??)
+    IFS=:; set -- $ADDR; unset IFS
+    W0=$((0x$4)); W1=$((0x$5 * 256 + 0x$6)); W2=$((0x$3)); W3=$((0x$1 * 256 + 0x$2))
+    echo "== BD address $ADDR from the BToADDR token"
+    { printf '// PSKEY_BDADDR
+&0001 = %04x %04x %04x %04x
+' $W0 $W1 $W2 $W3; cat /etc/bluetooth/bluecore6.psr; } > /tmp/bluecore6.psr ;;
+  *) echo "BToADDR token not found, keeping the chip default address"; cp /etc/bluetooth/bluecore6.psr /tmp/bluecore6.psr ;;
+esac
+echo "== psload"
+bccmd -t HCI -d hci0 psload -r -s ram /tmp/bluecore6.psr 2>&1 | tail -5
+sleep 3
+killall hciattach 2>/dev/null
+hciup 0 down 2>/dev/null
+sleep 1
+echo "== re-attach"
+hciattach -n -s 115200 $TTY bcsp 115200 noflow > /tmp/hciattach2.log 2>&1 &
+sleep 6
+hciup 0
+echo "== Read Local Version"; timeout 10 hcitool -i hci0 cmd 0x04 0x0001
+echo "== read back PSKEY_ANA_FREQ (0x01fe) and PSKEY_ANA_FTRIM (0x01f6)"
+bccmd -t HCI -d hci0 psget -s ram 0x01fe 2>&1 | tail -2
+bccmd -t HCI -d hci0 psget -s ram 0x01f6 2>&1 | tail -2
+echo "== inquiry (8 s)"
+timeout 30 hcitool -i hci0 scan --length=6 --flush 2>&1
+echo "== done"

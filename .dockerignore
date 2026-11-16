@@ -1,0 +1,6 @@
+*
+!rootfs/
+!initramfs/
+!kernel/
+!scripts/
+!docker/

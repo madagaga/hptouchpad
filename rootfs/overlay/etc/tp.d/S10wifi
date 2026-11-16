@@ -1,0 +1,29 @@
+#!/bin/sh
+# Wi-Fi: wpa_supplicant with the networks saved by the settings panel (`tp -j wifi add`, wpa_cli save_config) in
+# /mnt/media/touchpad/wpa_supplicant.conf, on the webOS media partition, NOT in the repository (keys are stored as hex PSKs, not
+# passphrases). The file is created empty if missing. wpa_cli runs wifi-event on every (dis)connection: DHCP for whatever network
+# wpa_supplicant joins, at boot or later from the panel.
+case "$1" in
+  start)
+    CONF=/mnt/media/touchpad/wpa_supplicant.conf
+    ifconfig wlan0 up 2>/dev/null || exit 0
+    [ -f "$CONF" ] || printf 'ctrl_interface=/var/run/wpa_supplicant\nupdate_config=1\n' > "$CONF"
+    grep -q '^update_config=1' "$CONF" || sed -i '1a update_config=1' "$CONF"
+    mkdir -p /var/run/wpa_supplicant
+    wpa_supplicant -B -i wlan0 -D nl80211 -c "$CONF"
+    iw dev wlan0 set power_save off
+    cat > /tmp/dhcp.script <<'SCRIPT'
+#!/bin/sh
+case "$1" in
+  bound|renew)
+    ifconfig $interface $ip netmask ${subnet:-255.255.255.0}
+    [ -n "$router" ] && { route del default dev $interface 2>/dev/null; route add default gw ${router%% *} dev $interface; }
+    echo "nameserver ${dns%% *}" > /etc/resolv.conf ;;
+esac
+SCRIPT
+    chmod +x /tmp/dhcp.script
+    i=0; while [ $i -lt 10 ] && [ ! -S /var/run/wpa_supplicant/wlan0 ]; do sleep 0.5; i=$((i+1)); done
+    wpa_cli -i wlan0 -a /usr/local/bin/wifi-event -B
+    ;;
+  stop) killall wpa_cli wpa_supplicant udhcpc 2>/dev/null ;;
+esac

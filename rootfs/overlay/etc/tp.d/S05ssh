@@ -1,0 +1,7 @@
+#!/bin/sh
+# SSH (dropbear): the user touchpad with its password, and root with the key of the project when the image was built without RELEASE=1
+# (/root/.ssh/authorized_keys, put in the image by the Dockerfile). Host keys are created at boot.
+case "$1" in
+  start) mkdir -p /etc/dropbear; dropbear -R -E -p 22 2>/dev/null ;;
+  stop) killall dropbear 2>/dev/null ;;
+esac

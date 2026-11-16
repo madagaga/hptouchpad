@@ -1,0 +1,13 @@
+#!/bin/sh
+# Time: time zone saved by the settings panel (/mnt/media/touchpad/tz) and BusyBox ntpd when ntp=1 in tpd.conf (default on, server
+# pool.ntp.org); ntpd keeps retrying until the Wi-Fi of S10wifi is up. No RTC in the kernel yet: the clock starts at 1970 until NTP answers.
+C=/mnt/media/touchpad
+case "$1" in
+  start)
+    Z=$(head -n1 $C/tz 2>/dev/null); [ -n "$Z" ] && [ -f "/usr/share/zoneinfo/$Z" ] && ln -sf "/usr/share/zoneinfo/$Z" /etc/localtime
+    N=$(sed -n 's/^ntp=//p' $C/tpd.conf 2>/dev/null | tail -n1)
+    S=$(sed -n 's/^ntp_server=//p' $C/tpd.conf 2>/dev/null | tail -n1)
+    [ "${N:-1}" = 1 ] && ntpd -p "${S:-pool.ntp.org}"
+    ;;
+  stop) pkill -x ntpd 2>/dev/null ;;
+esac

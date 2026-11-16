@@ -1,0 +1,125 @@
+#!/bin/sh
+# tp: one command to drive the HP TouchPad hardware from a shell (BusyBox sh). Run `tp help`.
+# It wraps the lower level helpers (charge-mode, wifi-wpa, bt-test, cpu-state ...) and the sysfs interfaces.
+# the helpers are in /usr/local/bin, which callers such as daemons or CGIs may not have in their PATH
+export PATH=/usr/local/sbin:/usr/local/bin:$PATH
+P=/sys/class/power_supply
+
+# system GPIO number of a PM8058 GPIO (1-based): the gpiochip of 44 lines
+pmgpio() {
+  for c in /sys/class/gpio/gpiochip*; do
+    [ "$(cat $c/ngpio 2>/dev/null)" = 44 ] && { echo $(( $(cat $c/base) + $1 - 1 )); return; }
+  done
+}
+
+usage() {
+cat <<USAGE
+tp info                      summary: kernel, battery, temperature, CPU, Wi-Fi, Bluetooth
+tp battery                   battery and adapter details
+tp charge [usb|750|900|1400|2000|status]   input current of the charger (default status)
+tp power                     charge source, battery and the state of the power policy daemon
+tp temp                      SoC temperature and thermal trips
+tp cpu                       CPU and L2 clocks
+tp backlight [on|off|0-100|status]   LCD backlight brightness in percent
+tp wifi status|scan|connect <ssid>|wpa <ssid> <passphrase>|ps on|off|test [ssid]
+tp bt up|psr|visible [s]|scan|status|down        Bluetooth controller (CSR BC6)
+tp ssh                       show the SSH daemon and the addresses
+tp panel open|close|toggle   settings panel in Cog (Alpine rootfs; triple Home runs toggle)
+tp recovery                  reboot into the USB recovery mode
+tp -j <command...>           JSON API of the settings panel (tp-panel, Alpine rootfs)
+tp help
+USAGE
+}
+
+# settings panel API: JSON output, kept apart so that the commands above stay human readable
+[ "$1" = -j ] && { shift; command -v tp-panel > /dev/null || { echo '{"ok":false,"error":"no tp-panel"}'; exit 1; }; exec tp-panel "$@"; }
+
+case "$1" in
+  info)
+    echo "kernel:  $(uname -r) ($(uname -v | cut -c1-40))  up $(cut -d. -f1 /proc/uptime) s"
+    tp battery | head -2
+    tp temp | grep -v trip | tr "
+" " "; echo
+    tp cpu | tr '\n' ' '; echo
+    iw dev wlan0 link 2>/dev/null | grep -E "SSID|signal" | tr -d '\t' | tr '\n' ' '; echo
+    ifconfig wlan0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/ip:      \1/p'
+    echo "bt:      $(hcitool dev 2>/dev/null | tail -n +2 | tr -d '\t' | tr '\n' ' ')"
+    ;;
+  battery)
+    echo "battery: $(cat $P/battery/capacity)%  $(( $(cat $P/battery/voltage_now) / 1000 )) mV  $(( $(cat $P/battery/current_now) / 1000 )) mA  $(( $(cat $P/battery/temp) / 10 )).$(( $(cat $P/battery/temp) % 10 )) C  $(cat $P/battery/status)  health $(cat $P/battery/health)"
+    echo "adapter: online=$(cat $P/max8903_charger/online)  $(cat $P/max8903_charger/status)  health $(cat $P/max8903_charger/health)"
+    ;;
+  charge) shift; charge-mode "${1:-status}" ;;
+  power)
+    echo "udc: $(cat /sys/class/udc/*/state 2>/dev/null)  (not attached = wall adapter or nothing, configured = a PC)"
+    charge-mode status
+    echo "policy: $(cat /tmp/tp-powerd.state 2>/dev/null || echo 'daemon not running')"
+    ;;
+  temp)
+    for z in /sys/class/thermal/thermal_zone*; do
+      echo "$(cat $z/type): $(( $(cat $z/temp) / 1000 )) C"
+      for t in $z/trip_point_*_temp; do [ -f "$t" ] && echo "  trip $(cat ${t%_temp}_type): $(( $(cat $t) / 1000 )) C"; done
+    done
+    ;;
+  cpu) cpu-state ;;
+  backlight)
+    # brightness 0-100 through the pwm-backlight class device; falls back to the enable GPIO without the PWM driver
+    B=/sys/class/backlight/backlight
+    if [ -d $B ]; then
+      MAX=$(cat $B/max_brightness)
+      case "$2" in
+        on)  echo $MAX > $B/brightness ;;
+        off) echo 0 > $B/brightness ;;
+        ""|status) ;;
+        *[!0-9]*) echo "usage: tp backlight [on|off|0-100|status]"; exit 1 ;;
+        *)   [ "$2" -le 100 ] || { echo "brightness is 0-100"; exit 1; }
+             echo $(( ($2 * MAX + 50) / 100 )) > $B/brightness ;;
+      esac
+      echo "backlight: $(( ($(cat $B/brightness) * 100 + MAX / 2) / MAX )) % (level $(cat $B/brightness)/$MAX)"
+    else
+      N=$(pmgpio 25)
+      [ -n "$N" ] || { echo "pm8058 gpio chip not found"; exit 1; }
+      [ -d /sys/class/gpio/gpio$N ] || echo $N > /sys/class/gpio/export
+      case "$2" in
+        on)  echo out > /sys/class/gpio/gpio$N/direction; echo 1 > /sys/class/gpio/gpio$N/value ;;
+        off) echo out > /sys/class/gpio/gpio$N/direction; echo 0 > /sys/class/gpio/gpio$N/value ;;
+      esac
+      echo "backlight enable (no PWM driver): $(cat /sys/class/gpio/gpio$N/value)"
+    fi
+    ;;
+  wifi)
+    case "$2" in
+      status) iw dev wlan0 link; iw dev wlan0 get power_save; ifconfig wlan0 | sed -n 's/.*inet addr:\([0-9.]*\).*/ip \1/p' ;;
+      scan)   ifconfig wlan0 up; iw dev wlan0 scan | awk '/^BSS/ {b=$2} /freq:/ {f=$2} /signal:/ {s=$2} /SSID:/ {sub(/^[ \t]*SSID: /,""); printf "%s dBm  %s MHz  %s\n", s, f, $0}' | sort -n -r | head -${3:-30} ;;
+      connect) wifi-connect "$3" ;;
+      wpa)     wifi-wpa "$3" "$4" ;;
+      ps)      iw dev wlan0 set power_save "${3:-off}"; iw dev wlan0 get power_save ;;
+      test)    wifi-selftest "${3:-AKTO-GUEST}" ;;
+      *) usage ;;
+    esac ;;
+  bt)
+    case "$2" in
+      up)      bt-test 115200 bcsp noflow 2>&1 | tail -n 12; bt-psr 2>&1 | grep -v Loading | tail -n 8 ;;
+      psr)     bt-psr ;;
+      visible) bt-visible "${3:-60}" ;;
+      scan)    hcitool -i hci0 scan --length=6 --flush ;;
+      status)  hcitool dev; hcitool -i hci0 cmd 0x04 0x0001 | tail -n 2 ;;
+      down)    killall hciattach 2>/dev/null; hciup 0 down 2>/dev/null ;;
+      *) usage ;;
+    esac ;;
+  ssh) ps | grep "[d]ropbear"; ifconfig | sed -n 's/.*inet addr:\([0-9.]*\).*/ip \1/p' ;;
+  panel)
+    # Cog listens on the session bus started by /etc/tp.d/S90browser; /run/tp.panel marks the panel as shown
+    command -v cogctl > /dev/null || { echo "panel: no cogctl (Alpine rootfs only)"; exit 1; }
+    export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus-session
+    A="$2"; [ "$A" = toggle ] && { [ -f /run/tp.panel ] && A=close || A=open; }
+    case "$A" in
+      open)  cogctl open http://127.0.0.1:8080/ && touch /run/tp.panel ;;
+      close) U=about:blank; [ -s /mnt/media/touchpad/url ] && U=$(head -n1 /mnt/media/touchpad/url | tr -d '\r')
+             cogctl open "$U" && rm -f /run/tp.panel ;;
+      *) usage ;;
+    esac ;;
+  recovery) echo "rebooting into recovery"; devmem 0x2A05F65C 32 0x6f656d11; devmem 0x00800820 32 0 ;;
+  help|"") usage ;;
+  *) echo "unknown command: $1"; usage; exit 1 ;;
+esac

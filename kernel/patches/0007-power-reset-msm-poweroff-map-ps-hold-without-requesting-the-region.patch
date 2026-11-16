@@ -1,0 +1,25 @@
+--- a/drivers/power/reset/msm-poweroff.c	2026-10-15 13:12:11.746477809 +0000
++++ b/drivers/power/reset/msm-poweroff.c	2026-10-15 13:12:11.746477809 +0000
+@@ -25,9 +25,19 @@
+ 
+ static int msm_restart_probe(struct platform_device *pdev)
+ {
+-	msm_ps_hold = devm_platform_ioremap_resource(pdev, 0);
+-	if (IS_ERR(msm_ps_hold))
+-		return PTR_ERR(msm_ps_hold);
++	struct resource *res;
++
++	/*
++	 * On MSM8660 the PS_HOLD register sits inside the TLMM register block, which the pinctrl
++	 * driver already requested: map it without requesting the region again.
++	 */
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res)
++		return -ENODEV;
++
++	msm_ps_hold = devm_ioremap(&pdev->dev, res->start, resource_size(res));
++	if (!msm_ps_hold)
++		return -ENOMEM;
+ 
+ 	devm_register_sys_off_handler(&pdev->dev, SYS_OFF_MODE_RESTART,
+ 				      128, do_msm_poweroff, NULL);

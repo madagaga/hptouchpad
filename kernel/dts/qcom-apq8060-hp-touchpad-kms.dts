@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * HP TouchPad with the msm DRM display driver (MDP4 + LCDC + panel-dpi) instead of the bootloader framebuffer only.
+ * Build with: DTB_NAME=qcom-apq8060-hp-touchpad-kms ./build.sh all   (work in progress, see STATUS.md)
+ */
+#include "qcom-apq8060-hp-touchpad.dts"
+
+&mdp {
+	/* scanout buffers (physically contiguous) come from the reusable vram area, see the comment of vram_mem */
+	memory-region = <&vram_mem>;
+	status = "okay";
+};
+
+&panel {
+	/*
+	 * Only here: a phandle reference makes pwm-backlight derive its initial power state from the PWM state (unknown: no
+	 * get_state in the LPG driver), it would start powered down. The panel driver turns the backlight on with the panel.
+	 */
+	backlight = <&backlight>;
+	status = "okay";
+};
+
+&gpu {
+	status = "okay";
+};

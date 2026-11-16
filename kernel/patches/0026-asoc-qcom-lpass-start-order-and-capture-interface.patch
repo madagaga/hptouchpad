@@ -1,0 +1,50 @@
+--- a/sound/soc/qcom/lpass.h
++++ b/sound/soc/qcom/lpass.h
+@@ -372,6 +372,14 @@
+ 	 * at different offset to ipq806x
+ 	 **/
+ 	u32	dmactl_audif_start;
++	/*
++	 * start the DMA and the I2S port at the trigger, DMA first (prepare only enables the bit
++	 * clock): on MSM8660 a DMA enabled at prepare runs ahead of the stream (xrun at the start)
++	 * and a DMA enabled after the I2S port does not move
++	 */
++	bool	dma_enable_at_start;
++	/* non-zero: interface code of the capture DMA (default: I2S port + dmactl_audif_start) */
++	u32	wrdma_audif;
+ 	u32	wrdma_channel_start;
+ 	u32	rxtx_wrdma_channel_start;
+ 	u32	va_wrdma_channel_start;
+--- a/sound/soc/qcom/lpass-cpu.c
++++ b/sound/soc/qcom/lpass-cpu.c
+@@ -378,7 +378,9 @@
+ 	 * the data flow.
+ 	 * (ex: to drop start up pop noise before capture starts).
+ 	 */
+-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++	if (drvdata->variant->dma_enable_at_start)
++		ret = 0;	/* the port starts at the trigger, after the DMA */
++	else if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+ 		ret = regmap_fields_write(i2sctl->spken, id, LPAIF_I2SCTL_SPKEN_ENABLE);
+ 	else
+ 		ret = regmap_fields_write(i2sctl->micen, id, LPAIF_I2SCTL_MICEN_ENABLE);
+--- a/sound/soc/qcom/lpass-platform.c
++++ b/sound/soc/qcom/lpass-platform.c
+@@ -434,6 +434,8 @@
+ 
+ 	dmactl = __lpass_get_dmactl_handle(substream, component);
+ 	id = __lpass_get_id(substream, component);
++	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE && v->wrdma_audif)
++		dma_port = v->wrdma_audif;
+ 
+ 	bitwidth = snd_pcm_format_width(format);
+ 	if (bitwidth < 0) {
+@@ -647,6 +649,8 @@
+ 			return ret;
+ 		}
+ 	}
++	if (v->dma_enable_at_start)
++		return 0;
+ 	ret = regmap_fields_write(dmactl->enable, id, LPAIF_DMACTL_ENABLE_ON);
+ 	if (ret) {
+ 		dev_err(soc_runtime->dev, "error writing to rdmactl reg: %d\n",

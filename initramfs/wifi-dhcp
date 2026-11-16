@@ -1,0 +1,14 @@
+#!/bin/sh
+# DHCP on wlan0 with BusyBox udhcpc: address, default route and resolv.conf (script written to /tmp).
+cat > /tmp/dhcp.script <<'SCRIPT'
+#!/bin/sh
+case "$1" in
+  bound|renew)
+    ifconfig $interface $ip netmask ${subnet:-255.255.255.0}
+    [ -n "$router" ] && route add default gw ${router%% *} dev $interface
+    echo "nameserver ${dns%% *}" > /tmp/resolv.conf
+    echo "lease: ip=$ip router=$router dns=$dns" ;;
+esac
+SCRIPT
+chmod +x /tmp/dhcp.script
+busybox udhcpc -i wlan0 -n -q -s /tmp/dhcp.script

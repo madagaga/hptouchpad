@@ -1,0 +1,167 @@
+#!/bin/sh
+# Minimal init: mounts the pseudo filesystems and sets up a USB gadget (serial + ethernet) for debugging.
+export PATH=/bin:/sbin:/usr/sbin:/usr/bin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t tmpfs tmpfs /dev
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
+mount -t configfs none /sys/kernel/config 2>/dev/null
+
+# Restart reason for the bootloader: "recover" (Palm value, IMEM 0x2A05F65C). Any later reset (reboot,
+# panic, watchdog bite) then lands in the USB recovery mode instead of booting webOS, so test cycles
+# need no button.
+devmem 0x2A05F65C 32 0x6f656d11 2>/dev/null
+
+# CPU1 is released by the kernel on the slow AFAB bus clock (the bootloader only sets up the SCPLL of
+# CPU0, which runs from it: see /usr/bin/cpu-state). Give it the same source: SPSS1 CLK_SEL core source
+# bits (2:1) = 1 (SCPLL, already calibrated and running at the same rate as CPU0's). Measured: CPU1 was
+# twice as slow as CPU0 before this. Temporary: a real clock driver (cpufreq) should replace it.
+S0=$(devmem 0x02041008 32 2>/dev/null); S1=$(devmem 0x02051008 32 2>/dev/null)
+if ! grep -q "touchpad.cpu1fix=0" /proc/cmdline && [ -n "$S0" ] && [ -n "$S1" ] && [ $(( (S0 >> 1) & 3 )) = 1 ] && [ $(( (S1 >> 1) & 3 )) = 0 ]; then
+  devmem 0x02051008 32 $(( (S1 & ~6) | 2 ))
+fi
+
+# Root filesystem in a file on the webOS "media" volume: touchpad.rootfile=<path on the media volume> on the kernel command line, or,
+# without it, the first line of the file touchpad/rootfile on the media volume (delete that file to get the initramfs shell back;
+# touchpad.rootfile=none on the command line skips both). The media volume is an LVM logical volume of /dev/mmcblk0p14 (vfat,
+# 12.6 GiB, offset from the LVM metadata of this tablet), reached through a loop device; the file is an ext4 image reached through
+# a second loop device. Nothing of webOS is modified. On any failure the initramfs shell below is kept.
+RF=$(sed -n 's/.*touchpad\.rootfile=\([^ ]*\).*/\1/p' /proc/cmdline)
+# Byte offset of the "media" LV: read from the newest LVM metadata copy (highest seqno) in the first MiB of the PV, since it differs
+# between units; the value of the first tablet is the fallback.
+media_offset() {
+  dd if=/dev/mmcblk0p14 bs=1M count=1 2>/dev/null | strings | awk '
+    /^seqno = / { b++; sq[b] = $3 }
+    /^extent_size = / { es[b] = $3 }
+    /^pe_start = / { ps[b] = $3 }
+    /^media \{/ { m = b }
+    m == b && /^"pv0", / { split($0, a, ", "); me[b] = a[2]; m = -1 }
+    END { best = 0; for (i in me) if (best == 0 || sq[i] + 0 > sq[best] + 0) best = i
+          if (best) printf "%.0f\n", (ps[best] + me[best] * es[best]) * 512 }'
+}
+media_mount() {
+  grep -q " /mnt/media " /proc/mounts && return 0
+  mkdir -p /mnt/media
+  OFF=$(media_offset); [ -n "$OFF" ] || OFF=1116733440
+  losetup -o "$OFF" /dev/loop0 /dev/mmcblk0p14 && mount -t vfat -o rw,noatime /dev/loop0 /mnt/media
+}
+if [ -z "$RF" ] && media_mount; then
+  if [ -s /mnt/media/touchpad/rootfile ]; then
+    RF=$(head -n1 /mnt/media/touchpad/rootfile | tr -d '\015')
+  else
+    umount /mnt/media; losetup -d /dev/loop0
+  fi
+fi
+if [ -n "$RF" ] && [ "$RF" != none ]; then
+  echo "rootfs: looking for $RF on the webOS media volume"
+  mkdir -p /newroot
+  if media_mount; then
+    if [ -f "/mnt/media/$RF" ] && losetup /dev/loop1 "/mnt/media/$RF" && mount -t ext4 -o rw,noatime /dev/loop1 /newroot; then
+      mkdir -p /newroot/mnt/media /newroot/proc /newroot/sys /newroot/dev
+      # development builds with VIDC_FW=webos carry the H.264 codec firmware in the initramfs: hand it to the rootfs
+      if [ -f /lib/firmware/qcom/vidc_1080p.fw ]; then
+        mkdir -p /newroot/lib/firmware/qcom && cp /lib/firmware/qcom/vidc_1080p.fw /newroot/lib/firmware/qcom/
+      fi
+      mount --move /mnt/media /newroot/mnt/media
+      mount --move /proc /newroot/proc
+      mount --move /sys /newroot/sys
+      mount --move /dev /newroot/dev
+      echo "rootfs: switching to $RF"
+      exec switch_root /newroot /sbin/init
+    fi
+    echo "rootfs: $RF not usable, staying in the initramfs"
+  else
+    echo "rootfs: cannot reach the media volume, staying in the initramfs"
+  fi
+fi
+
+# Hardware watchdog: reset the SoC if the kernel stops running (pet every 5 s, bite after 30 s).
+[ -c /dev/watchdog0 ] && watchdog -t 5 -T 30 /dev/watchdog0 2>/dev/null
+
+# Logs of the previous boot kept in RAM by ramoops (after a panic or a watchdog reset).
+mkdir -p /sys/fs/pstore && mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+
+echo
+echo "=== HP TouchPad: initramfs OK ==="
+uname -a
+echo
+
+# USB gadget through configfs: ECM (network) + ACM (serial). Device 192.168.7.2 <-> host 192.168.7.1
+G=/sys/kernel/config/usb_gadget/g1
+if [ -d /sys/kernel/config/usb_gadget ]; then
+  mkdir -p $G && cd $G
+  echo 0x1d6b > idVendor
+  echo 0x0104 > idProduct
+  mkdir -p strings/0x409
+  echo "hptouchpad" > strings/0x409/product
+  mkdir -p configs/c.1 functions/ecm.usb0 functions/acm.GS0
+  ln -sf functions/ecm.usb0 configs/c.1/
+  ln -sf functions/acm.GS0  configs/c.1/
+  # Experiment: bulk transfers fail at high speed (suspected PHY tuning), try full speed (12 Mbit/s).
+  echo full-speed > max_speed 2>/dev/null
+  UDC=$(ls /sys/class/udc 2>/dev/null | head -n1)
+  [ -n "$UDC" ] && echo "$UDC" > UDC && ifconfig usb0 192.168.7.2 up
+  cd /
+fi
+
+# USB gadget state, printed on the screen for debugging.
+echo "--- USB gadget ---"
+echo "udc: $(ls /sys/class/udc 2>&1)"
+echo "UDC bound: $(cat /sys/kernel/config/usb_gadget/g1/UDC 2>&1)"
+for i in 1 2 3 4 5; do [ -c /dev/ttyGS0 ] && break; sleep 1; done
+ls -l /dev/ttyGS* 2>&1
+echo "usb0: $(ifconfig usb0 2>&1 | head -2)"
+
+# Shell on the USB serial port (ttyGS0). A USB reset hangs up the tty and ends the shell, so it is
+# respawned in a loop. Plain `sh` (no cttyhack): cttyhack did not work on ttyGS0, while plain
+# reads/writes on the tty were verified to work in both directions.
+if [ -c /dev/ttyGS0 ]; then
+  ( while true; do setsid sh -c 'exec sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1'; sleep 1; done ) &
+fi
+
+# Charge and power policy (source detection, low battery protection).
+tp-powerd > /dev/null 2>&1 &
+
+# (No telnetd: Alpine's static BusyBox does not have it; busybox-extras is dynamic. Use the serial shell or SSH.)
+
+# SSH over the USB network and, later, the Wi-Fi: key authentication only (no password), host keys created at boot.
+if [ -x /usr/sbin/dropbear ] && [ -s /root/.ssh/authorized_keys ]; then
+  dropbear -R -s -E -p 22 2>/dev/null &
+fi
+
+# USB debug report on the screen: 7 compact lines (one every 4 s), then one full block that stays
+# on screen (controller state, usb0 configuration, ChipIdea registers). See STATUS.md.
+(
+  n=0
+  S=/sys/class/net/usb0/statistics
+  # (Re)configure the gadget network interface explicitly, in case the first attempt was too early.
+  ifconfig usb0 192.168.7.2 netmask 255.255.255.0 up 2>&1
+  while [ "$n" -lt 8 ]; do
+    sleep 4
+    n=$((n + 1))
+    echo "[usbdbg $n] $(cat /sys/class/udc/*/state 2>&1) $(cat /sys/class/udc/*/current_speed 2>&1)"          "ip=$(ifconfig usb0 2>&1 | sed -n 's/.*inet addr:\([0-9.]*\).*//p')"          "rx=$(cat $S/rx_packets 2>&1) tx=$(cat $S/tx_packets 2>&1)"          "rx_err=$(cat $S/rx_errors 2>&1) tx_err=$(cat $S/tx_errors 2>&1) tx_drop=$(cat $S/tx_dropped 2>&1)"
+  done
+  mount -t debugfs none /sys/kernel/debug 2>/dev/null
+  D=/sys/kernel/debug/usb/ci_hdrc.0
+  echo "[usb0] $(ifconfig usb0 2>&1 | tr -s ' 
+' ' ' | cut -c1-230)"
+  echo "[arp] $(cat /proc/net/arp 2>&1 | tr '
+' '|' | cut -c1-120)"
+  echo "[ci files] $(ls $D 2>&1 | tr '
+' ' ')"
+  grep -i -E "USBCMD|USBSTS|USBMODE|PORTSC|ENDPTPRIME|ENDPTFLUSH|ENDPTSTAT|ENDPTCOMPLETE|ENDPTCTRL|AHB|GEN" $D/registers 2>&1 | tr -s ' ' | tr '
+' '|' | fold -w 110
+  echo
+  echo "[ci qheads] $(cat $D/qheads 2>&1 | tr -s ' 
+' ' ' | cut -c1-300)"
+  echo "[ci reqs] $(cat $D/requests 2>&1 | tr -s ' 
+' ' ' | cut -c1-300)"
+  echo "[ci events] $(cat $D/events 2>&1 | tr '
+' ' ' | cut -c1-200)"
+  dmesg | grep -i -E "mmc0|mmcblk|mmci" | tail -4
+  dmesg | grep -i -E "ci_hdrc|udc|gadget|ulpi|phy|usb0|ecm|acm" | tail -6
+) >/dev/tty0 2>&1 &
+
+# Shell on the screen.
+exec setsid -c sh </dev/tty0 >/dev/tty0 2>&1

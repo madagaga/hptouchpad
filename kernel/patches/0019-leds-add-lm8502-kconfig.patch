@@ -1,0 +1,31 @@
+--- a/drivers/leds/Kconfig	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/leds/Kconfig	2026-10-27 08:14:50.328216731 +0000
+@@ -223,6 +223,18 @@
+ 	  side of CZ.NIC's Turris Omnia router. There are 12 RGB LEDs on the
+ 	  front panel.
+ 
++config LEDS_LM8502
++	tristate "LED support for the LM8502 lighting driver"
++	depends on LEDS_CLASS
++	depends on I2C && OF
++	help
++	  This option enables support for the LED outputs of the LM8502
++	  lighting driver, which lights the two LEDs of the Home button of
++	  the HP TouchPad.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called leds-lm8502.
++
+ config LEDS_LM3530
+ 	tristate "LCD Backlight driver for LM3530"
+ 	depends on LEDS_CLASS
+--- a/drivers/leds/Makefile	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/leds/Makefile	2026-10-27 08:14:50.328216731 +0000
+@@ -38,6 +38,7 @@
+ obj-$(CONFIG_LEDS_IS31FL319X)		+= leds-is31fl319x.o
+ obj-$(CONFIG_LEDS_IS31FL32XX)		+= leds-is31fl32xx.o
+ obj-$(CONFIG_LEDS_LM3530)		+= leds-lm3530.o
++obj-$(CONFIG_LEDS_LM8502)		+= leds-lm8502.o
+ obj-$(CONFIG_LEDS_LM3532)		+= leds-lm3532.o
+ obj-$(CONFIG_LEDS_LM3533)		+= leds-lm3533.o
+ obj-$(CONFIG_LEDS_LM355x)		+= leds-lm355x.o

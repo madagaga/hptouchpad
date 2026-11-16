@@ -1,0 +1,30 @@
+--- a/drivers/pwm/Kconfig	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/pwm/Kconfig	2026-10-16 13:35:41.599352666 +0000
+@@ -491,6 +491,17 @@
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called pwm-pca9685.
+ 
++config PWM_PM8058_LPG
++	tristate "Qualcomm PM8058 LPG PWM support"
++	depends on MFD_PM8XXX || COMPILE_TEST
++	select REGMAP
++	help
++	  Generic PWM framework driver for the LPG channels of the Qualcomm PM8058
++	  (backlight of the HP TouchPad).
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called pwm-pm8058-lpg.
++
+ config PWM_PXA
+ 	tristate "PXA PWM support"
+ 	depends on ARCH_PXA || ARCH_MMP || COMPILE_TEST
+--- a/drivers/pwm/Makefile	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/pwm/Makefile	2026-10-16 13:35:41.599352666 +0000
+@@ -44,6 +44,7 @@
+ obj-$(CONFIG_PWM_NTXEC)		+= pwm-ntxec.o
+ obj-$(CONFIG_PWM_OMAP_DMTIMER)	+= pwm-omap-dmtimer.o
+ obj-$(CONFIG_PWM_PCA9685)	+= pwm-pca9685.o
++obj-$(CONFIG_PWM_PM8058_LPG)	+= pwm-pm8058-lpg.o
+ obj-$(CONFIG_PWM_PXA)		+= pwm-pxa.o
+ obj-$(CONFIG_PWM_RASPBERRYPI_POE)	+= pwm-raspberrypi-poe.o
+ obj-$(CONFIG_PWM_RCAR)		+= pwm-rcar.o

@@ -1,0 +1,56 @@
+#!/bin/sh
+# Starts the browser on the screen. Default: Cog's DRM platform on the Adreno 220 GPU (freedreno, GLES renderer), no compositor; the GPU varying
+# defect is fixed by the GFX3D power cycle of kernel patch 0029 (STATUS.md). Software rendering (Mesa llvmpipe through kms_swrast, modeset renderer)
+# is the fallback: used when there is no GPU render node or when /mnt/media/touchpad/swrender exists.
+# The start-up URL can be set in /mnt/media/touchpad/url (one line), default about:blank. Disabled by touching /mnt/media/touchpad/nobrowser.
+# Fallback: touch /mnt/media/touchpad/weston to run Weston (pixman) and Cog's Wayland platform instead. Logs: /tmp/cog.log (and /tmp/weston.log,
+# /tmp/seatd.log).
+case "$1" in
+  start)
+    [ -f /mnt/media/touchpad/nobrowser ] && exit 0
+    export XDG_RUNTIME_DIR=/run/user/0; mkdir -p $XDG_RUNTIME_DIR; chmod 700 $XDG_RUNTIME_DIR
+    # the WebKit sandbox (bwrap) needs user namespaces, not enabled in this kernel
+    export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+    # session bus at a fixed address so that cogctl (settings panel, tp) can drive Cog: cogctl open <url>
+    export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus-session
+    [ -S /run/dbus-session ] || dbus-daemon --session --fork --address=$DBUS_SESSION_BUS_ADDRESS
+    URL=about:blank; [ -s /mnt/media/touchpad/url ] && URL=$(head -n1 /mnt/media/touchpad/url)
+    set --
+    if [ -r /mnt/media/touchpad/cog-options ]; then
+      while IFS='=' read -r name value; do
+        case "$name" in
+          scale|device-scale|bg-color|webprocess-failure|set-permissions)
+            [ -z "$value" ] || set -- "$@" "--$name=$value" ;;
+          doc-viewer) [ "$value" != on ] || set -- "$@" --doc-viewer ;;
+          # GLib uses LANGUAGE for the preferred locale, even when it is not installed on the tablet.
+          language) [ -z "$value" ] || export LANGUAGE="$(printf '%s' "$value" | tr '-' '_')" ;;
+        esac
+      done < /mnt/media/touchpad/cog-options
+    fi
+    if [ -f /mnt/media/touchpad/weston ]; then
+      seatd -g video > /tmp/seatd.log 2>&1 &
+      sleep 1
+      weston --backend=drm --renderer=pixman --idle-time=0 > /tmp/weston.log 2>&1 &
+      sleep 4
+      WAYLAND_DISPLAY=wayland-1 cog --platform=wayland "$@" -- "$URL" > /tmp/cog.log 2>&1 &
+    elif [ -e /dev/dri/renderD128 ] && [ ! -f /mnt/media/touchpad/swrender ]; then
+      # GPU: the GLES renderer composes the web process frames (GPU buffers) into its own scanout buffers; the modeset renderer cannot
+      # flip GPU buffers ("failed to schedule a page flip")
+      # rotation (quarter turns counter-clockwise) chosen in the settings panel; only the GLES renderer rotates
+      R=$(sed -n 's/^rotation=\([0-3]\)$/\1/p' /mnt/media/touchpad/tpd.conf 2>/dev/null | tail -n1)
+      echo "browser: GPU (freedreno), rotation ${R:-0}" > /tmp/cog.log
+      cog --platform=drm --platform-params=renderer=gles,rotation=${R:-0} "$@" -- "$URL" >> /tmp/cog.log 2>&1 &
+    else
+      # software rasteriser (llvmpipe) through GBM on the KMS device. Set ALONE: GBM_ALWAYS_SOFTWARE or LIBGL_ALWAYS_SOFTWARE make Mesa
+      # try zink first and fall back to the GPU
+      export MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+      # without this, a richer page crashes Cog (SIGSEGV after "Buffer address requested when its parent pool has an external reference...")
+      export WEBKIT_DISABLE_COMPOSITING_MODE=1
+      # renderer=modeset: shared-memory frames from the software web process copied into a KMS buffer. The GLES renderer only handles
+      # GPU (EGLImage) frames and crashes on wl_surface.commit with shared-memory frames (NULL handler in wpebackend-fdo's ws.cpp)
+      echo "browser: software rendering (llvmpipe)" > /tmp/cog.log
+      cog --platform=drm --platform-params=renderer=modeset "$@" -- "$URL" >> /tmp/cog.log 2>&1 &
+    fi
+    ;;
+  stop) pkill cog 2>/dev/null; killall weston seatd 2>/dev/null; pkill -f "dbus-daemon --session" 2>/dev/null; rm -f /run/dbus-session ;;
+esac

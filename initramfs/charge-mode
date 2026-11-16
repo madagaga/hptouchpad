@@ -1,0 +1,22 @@
+#!/bin/sh
+# Input current of the MAX8903B charger (see STATUS.md, "Charging and battery"). Usage: charge-mode usb|750|900|1400|2000|status
+#   usb : USB mode, 500 mA (safe for a PC port, DEFAULT after boot); the others select the DC mode, whose current is
+#         set by ISET1/ISET2 (GPIO 34/30; table of the EVT2 and later boards): 750 mA 0/0, 900 mA 0/1, 2000 mA 1/0, 1400 mA 1/1.
+# Use 900 or more only with a wall adapter that can give it (the PC USB port gives 500 mA). The pads are written directly in the
+# TLMM registers (GPIO_IN_OUT at 0x801004 + 0x10 * gpio, bit 1 = output value), the source of the adapter is not detected yet.
+w() { devmem $((0x801004 + 0x10 * $1)) 32 $2 > /dev/null; }
+r() { devmem $((0x801004 + 0x10 * $1)) 32; }
+case "$1" in
+  usb)  w 42 2; w 133 2; w 33 0; w 34 0; w 30 0 ;;
+  750)  w 42 0; w 34 0; w 30 0 ;;
+  900)  w 42 0; w 34 0; w 30 2 ;;
+  2000) w 42 0; w 34 2; w 30 0 ;;
+  1400) w 42 0; w 34 2; w 30 2 ;;
+  status|"") ;;
+  *) echo "usage: charge-mode usb|750|900|1400|2000|status"; exit 1 ;;
+esac
+dcm=$(( $(r 42) >> 1 & 1 )); i1=$(( $(r 34) >> 1 & 1 )); i2=$(( $(r 30) >> 1 & 1 ))
+if [ $dcm = 1 ]; then mode="USB mode ($( [ $(( $(r 133) >> 1 & 1 )) = 1 ] && echo 500 || echo 100 ) mA)"; else mode="DC mode ISET1=$i1 ISET2=$i2"; fi
+echo "charger: $mode"
+P=/sys/class/power_supply
+echo "battery: $(cat $P/battery/capacity)% $(cat $P/battery/voltage_now) uV $(cat $P/battery/current_now) uA ($(cat $P/battery/status)); adapter online=$(cat $P/max8903_charger/online) $(cat $P/max8903_charger/status)"

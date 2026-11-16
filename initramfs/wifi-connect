@@ -1,0 +1,20 @@
+#!/bin/sh
+# Connects wlan0 to an OPEN Wi-Fi network and gets an address with DHCP (no passwords here: WPA needs
+# wpa_supplicant, not in the initramfs yet, and credentials must never be stored in the repository).
+# Usage: wifi-connect <ssid>
+SSID="${1:?usage: wifi-connect <ssid>}"
+ifconfig wlan0 up
+sleep 1
+# the association can fail right after a scan: retry a few times, wait for the link each time
+tries=0
+while [ $tries -lt 4 ]; do
+  iw dev wlan0 connect "$SSID" 2>/dev/null
+  i=0
+  while [ $i -lt 8 ]; do
+    iw dev wlan0 link | grep -q "^Connected" && break 2
+    sleep 1; i=$((i+1))
+  done
+  tries=$((tries+1))
+done
+iw dev wlan0 link
+wifi-dhcp

@@ -1,0 +1,35 @@
+# Build outputs and caches
+out/
+build/
+# ... except the stage scripts of the Dockerfile
+!scripts/build/
+*.uImage
+
+# Proprietary firmware read from the stock webOS (not for redistribution)
+firmware/
+
+# Private SSH key of the project and secrets: never committed
+secrets/
+
+# Vendor source trees, editable copies, scratch space
+_work/
+
+# Reference data read from webOS (HP files, dumps with tablet identifiers, raw captures): kept on disk, not versioned
+data/
+
+# Working notes of the owner and the agents: kept on disk, not versioned
+STATUS.md
+MEMORY.md
+
+# Editor, OS and tool leftovers
+*.log
+*.bak
+*.orig
+*.rej
+*.pyc
+__pycache__/
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- Touch coverage page for Cog on the tablet: paints a big round brush (radius 20 px) under every touch point, so that painting the whole
+     panel shows which part reaches the screen, and prints the extreme coordinates reached (for the calibration). Tap the "Clear" box to restart. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Touch paint</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #e8e8e0; color: #222; font: 20px sans-serif; touch-action: none; }
+  canvas { position: fixed; inset: 0; }
+  #info { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none;
+          background: rgba(255, 255, 255, 0.8); padding: 8px 14px; border-radius: 8px; }
+  #clear { position: fixed; left: 50%; top: 60%; transform: translateX(-50%); padding: 10px 26px; font-size: 22px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">Paint the whole screen with your finger<br><span id="ext">-</span><br><span id="last">-</span></div>
+<button id="clear">Clear</button>
+<script>
+const c = document.getElementById('c'), g = c.getContext('2d');
+c.width = innerWidth; c.height = innerHeight;
+let minx = 1e9, maxx = -1e9, miny = 1e9, maxy = -1e9;
+function paint(x, y) {
+  g.fillStyle = 'rgba(0, 110, 220, 0.55)';
+  g.beginPath(); g.arc(x, y, 20, 0, 7); g.fill();
+  minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y);
+  document.getElementById('ext').textContent = 'x ' + Math.round(minx) + '..' + Math.round(maxx) + '   y ' + Math.round(miny) + '..' + Math.round(maxy) +
+    '   (screen ' + innerWidth + 'x' + innerHeight + ')';
+  document.getElementById('last').textContent = 'last ' + Math.round(x) + ', ' + Math.round(y);
+}
+for (const t of ['touchstart', 'touchmove'])
+  addEventListener(t, e => {
+    if (e.target.id === 'clear') return;
+    for (const p of e.changedTouches) paint(p.clientX, p.clientY);
+    e.preventDefault();
+  }, { passive: false });
+document.getElementById('clear').addEventListener('click', () => {
+  g.clearRect(0, 0, c.width, c.height);
+  minx = miny = 1e9; maxx = maxy = -1e9;
+  document.getElementById('ext').textContent = '-'; document.getElementById('last').textContent = '-';
+});
+</script>
+</body>
+</html>

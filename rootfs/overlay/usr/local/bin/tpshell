@@ -1,0 +1,6 @@
+#!/bin/sh
+# Shell for the console and the USB serial: the applets of BusyBox (ifconfig, udhcpc...) live in /usr/local/bin.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export XDG_RUNTIME_DIR=/run/user/0
+mkdir -p $XDG_RUNTIME_DIR; chmod 700 $XDG_RUNTIME_DIR
+exec /bin/sh

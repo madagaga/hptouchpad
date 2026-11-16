@@ -1,0 +1,46 @@
+#!/bin/sh
+# Bluetooth bring-up test for the CSR BC6 (see STATUS.md, "Wi-Fi and Bluetooth facts").
+# Usage: bt-test [baud] [type] [flow|noflow]      defaults: 115200 bcsp noflow (the chip starts at 115200,
+#   CyanogenMod's bt_vendor.conf has Type = bcsp, InitSpeed = 115200, FlowCtl = 0)
+# Sequence (the pins are outputs that start low): BT_POWER (GPIO 130) high, BT_RST_N (138) low then high,
+# then hciattach (BCSP link establishment + HCI line discipline) on the GSBI6 UART, then HCI commands
+# sent with hcitool.
+BAUD=${1:-115200}
+PROTO=${2:-bcsp}
+FLOW=${3:-noflow}
+TTY=/dev/ttyMSM1
+
+# GPIO numbers of the TLMM chip in /sys/class/gpio: base of the chip that has 173 lines
+BASE=""
+for c in /sys/class/gpio/gpiochip*; do
+  [ "$(cat $c/ngpio)" = "173" ] && BASE=$(cat $c/base)
+done
+[ -n "$BASE" ] || { echo "TLMM gpiochip not found"; ls /sys/class/gpio; exit 1; }
+gp() { echo $((BASE + $1)); }
+out() {   # out <gpio> <level>
+  n=$(gp $1)
+  [ -d /sys/class/gpio/gpio$n ] || echo $n > /sys/class/gpio/export
+  echo out > /sys/class/gpio/gpio$n/direction
+  echo $2 > /sys/class/gpio/gpio$n/value
+}
+
+killall btattach hciattach 2>/dev/null
+echo "== power sequence (gpio base $BASE)"
+out 138 0; out 131 0
+out 130 1; sleep 0.1
+out 138 1; sleep 0.3
+for g in 129 130 131 138; do echo "gpio$g=$(cat /sys/class/gpio/gpio$(gp $g)/value 2>/dev/null)"; done
+
+echo "== hciattach -n -s $BAUD $TTY $PROTO $BAUD $FLOW"
+killall hciattach 2>/dev/null
+hciattach -n -s $BAUD $TTY $PROTO $BAUD $FLOW > /tmp/hciattach.log 2>&1 &
+sleep 6
+cat /tmp/hciattach.log
+dmesg | grep -i -E "bluetooth|hci0" | tail -6
+echo "== hci devices"; ls /sys/class/bluetooth 2>&1
+hciup 0 && sleep 1
+echo "== Read Local Version (OGF 4, OCF 1)"
+timeout 10 hcitool -i hci0 cmd 0x04 0x0001
+echo "== Read BD_ADDR (OGF 4, OCF 9)"
+timeout 10 hcitool -i hci0 cmd 0x04 0x0009
+echo "== done"

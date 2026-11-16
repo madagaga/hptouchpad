@@ -1,0 +1,81 @@
+--- a/drivers/clk/qcom/lcc-msm8960.c
++++ b/drivers/clk/qcom/lcc-msm8960.c
+@@ -73,6 +73,25 @@ static const struct freq_tbl clk_tbl_aif_osr_492[] = {
+ 	{ }
+ };
+ 
++/*
++ * MSM8660: PLL4 at 540.672 MHz (L 20, M 28, N 1125, switched on through the RPM), vendor clock-8x60.c clk_tbl_aif_osr
++ * (F_AIF_OSR(freq, pll4, pre_div, m, n)).
++ */
++static const struct freq_tbl clk_tbl_aif_osr_540[] = {
++	{   768000, P_PLL4, 4, 1, 176 },
++	{  1024000, P_PLL4, 4, 1, 132 },
++	{  1536000, P_PLL4, 4, 1,  88 },
++	{  2048000, P_PLL4, 4, 1,  66 },
++	{  3072000, P_PLL4, 4, 1,  44 },
++	{  4096000, P_PLL4, 4, 1,  33 },
++	{  6144000, P_PLL4, 4, 1,  22 },
++	{  8192000, P_PLL4, 2, 1,  33 },
++	{ 12288000, P_PLL4, 4, 1,  11 },
++	{ 24576000, P_PLL4, 2, 1,  11 },
++	{ 27000000, P_PXO,  1, 0,   0 },
++	{ }
++};
++
+ static const struct freq_tbl clk_tbl_aif_osr_393[] = {
+ 	{   512000, P_PLL4, 4, 1, 192 },
+ 	{   768000, P_PLL4, 4, 1, 128 },
+@@ -444,6 +463,7 @@ static const struct qcom_cc_desc lcc_msm8960_desc = {
+ 
+ static const struct of_device_id lcc_msm8960_match_table[] = {
+ 	{ .compatible = "qcom,lcc-msm8960" },
++	{ .compatible = "qcom,lcc-msm8660" },
+ 	{ .compatible = "qcom,lcc-apq8064" },
+ 	{ .compatible = "qcom,lcc-mdm9615" },
+ 	{ }
+@@ -477,6 +497,44 @@ static int lcc_msm8960_probe(struct platform_device *pdev)
+ 		codec_i2s_spkr_osr_src.freq_tbl = clk_tbl_aif_osr_492;
+ 		spare_i2s_spkr_osr_src.freq_tbl = clk_tbl_aif_osr_492;
+ 		pcm_src.freq_tbl = clk_tbl_pcm_492;
++	} else if (val == 0x14) {
++		/* MSM8660: PLL4 at 540.672 MHz (no PCM table: the PCM interface is not used on these boards) */
++		slimbus_src.freq_tbl = clk_tbl_aif_osr_540;
++		mi2s_osr_src.freq_tbl = clk_tbl_aif_osr_540;
++		codec_i2s_mic_osr_src.freq_tbl = clk_tbl_aif_osr_540;
++		spare_i2s_mic_osr_src.freq_tbl = clk_tbl_aif_osr_540;
++		codec_i2s_spkr_osr_src.freq_tbl = clk_tbl_aif_osr_540;
++		spare_i2s_spkr_osr_src.freq_tbl = clk_tbl_aif_osr_540;
++		/*
++		 * The vendor 8660 driver does not poll the status bit of the bit clocks (CLK_AIF_BIT: halt_check = DELAY): on this
++		 * SoC bit 0 stays set after a disable ("status stuck at 'on'", then -EBUSY at the next enable).
++		 */
++		/*
++		 * The codec/spare I2S NS registers use the MI2S layout on the 8660 (vendor clock-8x60.c CLK_AIF_OSR/CLK_AIF_BIT):
++		 * OSR branch enable bit 17, bit clock enable bit 15, divider bits 13:10, external bit clock select bit 14; bit 19 is
++		 * the interface reset. The 8960 values (21, 19, 8-bit divider, 18) held the interface in reset and the DMA stalled.
++		 */
++		codec_i2s_mic_osr_clk.clkr.enable_mask = BIT(17);
++		spare_i2s_mic_osr_clk.clkr.enable_mask = BIT(17);
++		codec_i2s_spkr_osr_clk.clkr.enable_mask = BIT(17);
++		spare_i2s_spkr_osr_clk.clkr.enable_mask = BIT(17);
++		codec_i2s_mic_bit_div_clk.clkr.enable_mask = BIT(15);
++		spare_i2s_mic_bit_div_clk.clkr.enable_mask = BIT(15);
++		codec_i2s_spkr_bit_div_clk.clkr.enable_mask = BIT(15);
++		spare_i2s_spkr_bit_div_clk.clkr.enable_mask = BIT(15);
++		codec_i2s_mic_div_clk.width = 4;
++		spare_i2s_mic_div_clk.width = 4;
++		codec_i2s_spkr_div_clk.width = 4;
++		spare_i2s_spkr_div_clk.width = 4;
++		codec_i2s_mic_bit_clk.shift = 14;
++		spare_i2s_mic_bit_clk.shift = 14;
++		codec_i2s_spkr_bit_clk.shift = 14;
++		spare_i2s_spkr_bit_clk.shift = 14;
++		mi2s_bit_div_clk.halt_check = BRANCH_HALT_DELAY;
++		codec_i2s_mic_bit_div_clk.halt_check = BRANCH_HALT_DELAY;
++		spare_i2s_mic_bit_div_clk.halt_check = BRANCH_HALT_DELAY;
++		codec_i2s_spkr_bit_div_clk.halt_check = BRANCH_HALT_DELAY;
++		spare_i2s_spkr_bit_div_clk.halt_check = BRANCH_HALT_DELAY;
+ 	}
+ 	/* Enable PLL4 source on the LPASS Primary PLL Mux */
+ 	regmap_write(regmap, 0xc4, 0x1);

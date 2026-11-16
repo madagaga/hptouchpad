@@ -1,0 +1,22 @@
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -1025,4 +1025,12 @@
+ 	  Say Y here to read the battery of the HP TouchPad (capacity, voltage,
+ 	  current, temperature) from its A6 microcontroller over I2C.
+ 
++config CHARGER_TENDERLOIN
++	tristate "HP TouchPad charger (MAX8903B) with USB charger type detection"
++	depends on GPIOLIB && EXTCON && OF
++	help
++	  Say Y here to drive the MAX8903B charger of the HP TouchPad: detection of the
++	  kind of USB source (PC port, charging port, adapter) on the D+/D- lines, input
++	  current limit, charge enable, and the VBUS extcon of the USB controller.
++
+ endif # POWER_SUPPLY
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -118,3 +118,4 @@
+ obj-$(CONFIG_CHARGER_QCOM_SMB2)	+= qcom_pmi8998_charger.o
+ obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
+ obj-$(CONFIG_BATTERY_HP_A6)	+= hp_a6_battery.o
++obj-$(CONFIG_CHARGER_TENDERLOIN)	+= tenderloin_charger.o

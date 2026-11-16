@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- Touch calibration page for Cog on the tablet: light background, the expected sensitive area framed (the controller reports
+     sensor columns 7..33 and 36 only: x = 183..942 px), one numbered target at a time (5x5 grid inside that area), the next on
+     each tap. Each reported point is drawn and linked to its target, so the error is visible. The sensor positions are taken
+     from the ts_srv debug log (TS_SRV_DEBUG=1, "down" lines), in the same order, and fitted offline. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Touch calibration</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #c8c8c8; color: #222; font: 22px sans-serif; touch-action: none; }
+  canvas { position: fixed; inset: 0; }
+  #zone { position: fixed; left: 183px; width: 759px; top: 0; bottom: 0; background: #f4f4ef; border-left: 3px dashed #3a6; border-right: 3px dashed #3a6; box-sizing: border-box; }
+  #t { position: fixed; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 3px solid #d40; box-sizing: border-box; }
+  #t::after { content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; background: #d40; border-radius: 50%; }
+  #n { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="zone"></div>
+<canvas id="c"></canvas>
+<div id="t"></div>
+<div id="n"></div>
+<script>
+const xs = [230, 400, 562, 724, 895], ys = [60, 230, 384, 538, 708];
+const pts = [];
+for (const y of ys) for (const x of xs) pts.push([x, y]);
+let k = 0, last = 0, lx = 0, ly = 0;
+const c = document.getElementById('c'), g = c.getContext('2d');
+c.width = innerWidth; c.height = innerHeight;
+const t = document.getElementById('t'), n = document.getElementById('n');
+function show() {
+  if (k >= pts.length) { t.style.display = 'none'; n.textContent = 'Done (' + pts.length + ' targets)'; return; }
+  t.style.left = pts[k][0] + 'px'; t.style.top = pts[k][1] + 'px';
+  n.textContent = 'Tap the centre of target ' + (k + 1) + ' / ' + pts.length;
+}
+addEventListener('touchstart', e => { const p = e.changedTouches[0]; lx = p.clientX; ly = p.clientY; e.preventDefault(); }, { passive: false });
+addEventListener('touchend', e => {
+  e.preventDefault();
+  const now = Date.now();
+  if (now - last < 400 || k >= pts.length) return;  // one tap = one target
+  last = now;
+  g.strokeStyle = '#06c'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(pts[k][0], pts[k][1]); g.lineTo(lx, ly); g.stroke();
+  g.fillStyle = '#06c'; g.beginPath(); g.arc(lx, ly, 5, 0, 7); g.fill();
+  k++; show();
+}, { passive: false });
+show();
+</script>
+</body>
+</html>

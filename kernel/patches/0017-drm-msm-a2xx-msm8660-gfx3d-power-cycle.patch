@@ -1,0 +1,113 @@
+--- a/drivers/gpu/drm/msm/adreno/a2xx_gpu.c	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/gpu/drm/msm/adreno/a2xx_gpu.c	2026-10-26 13:51:41.294500103 +0000
+@@ -1,6 +1,11 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /* Copyright (c) 2018 The Linux Foundation. All rights reserved. */
+ 
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/of.h>
++
+ #include "a2xx_gpu.h"
+ #include "msm_gem.h"
+ #include "msm_mmu.h"
+@@ -105,6 +110,89 @@
+ 	return a2xx_idle(gpu);
+ }
+ 
++/*
++ * MSM8660 (HP TouchPad): power-cycle the GFX3D footswitch like the downstream footswitch-8x60 driver (footswitch_disable then
++ * footswitch_enable). The bootloader leaves the rail on with memory retention and mainline never switches it off, so the GPU internal
++ * memories keep their content across runs and reboots. The multimedia clock controller registers are reached directly.
++ */
++#define TP_MMSS_CC_BASE		0x04000000
++#define TP_GFX3D_CC		0x0080
++#define TP_GFX3D_GFS_CTL	0x0188
++#define TP_SW_RESET_AHB		0x020c
++#define TP_SW_RESET_CORE	0x0210
++#define TP_GFS_CLAMP		BIT(5)
++#define TP_GFS_ENABLE		BIT(8)
++#define TP_GFX3D_CC_RETAIN	BIT(31)
++#define TP_RESET_AHB_GFX3D	BIT(10)
++#define TP_RESET_CORE_GFX3D	BIT(12)
++
++static bool tp_gfx3d_reset_rate;
++module_param(tp_gfx3d_reset_rate, bool, 0600);
++MODULE_PARM_DESC(tp_gfx3d_reset_rate, "MSM8660: run the GFX3D power cycle with the core clock at 27 MHz like downstream");
++
++static void a2xx_msm8660_gfx3d_power_cycle(struct msm_gpu *gpu)
++{
++	void __iomem *mmss;
++	unsigned long rate = 0;
++	u32 gfs, cc;
++
++	/*
++	 * At every hw_init, i.e. at every runtime resume, as kgsl collapses the rail at every GPU idle: with a single cycle per boot the wrong
++	 * varyings come back (66 wrong draws out of 180).
++	 */
++	if (!of_machine_is_compatible("hp,touchpad"))
++		return;
++	mmss = ioremap(TP_MMSS_CC_BASE, SZ_4K);
++	if (!mmss)
++		return;
++	/*
++	 * Downstream runs the resets with the core clock at 27 MHz (reset_rate). Not done here: switching the rate at every cycle made the
++	 * MDP4 underrun (errors 0x100, flicker on touch) - to be checked with tp_gfx3d_reset_rate=1.
++	 */
++	if (tp_gfx3d_reset_rate && gpu->core_clk) {
++		rate = clk_get_rate(gpu->core_clk);
++		clk_set_rate(gpu->core_clk, 27000000);
++	}
++	gfs = readl(mmss + TP_GFX3D_GFS_CTL);
++	cc = readl(mmss + TP_GFX3D_CC);
++	dev_info(&gpu->pdev->dev, "GFX3D power cycle: GFS_CTL %08x GFX3D_CC %08x\n", gfs, cc);
++
++	/* collapse: memories may collapse, resets so that the outputs settle, clamp, rail off */
++	writel(cc & ~TP_GFX3D_CC_RETAIN, mmss + TP_GFX3D_CC);
++	writel(readl(mmss + TP_SW_RESET_AHB) | TP_RESET_AHB_GFX3D, mmss + TP_SW_RESET_AHB);
++	writel(readl(mmss + TP_SW_RESET_CORE) | TP_RESET_CORE_GFX3D, mmss + TP_SW_RESET_CORE);
++	udelay(1);
++	gfs |= TP_GFS_CLAMP;
++	writel(gfs, mmss + TP_GFX3D_GFS_CTL);
++	gfs &= ~TP_GFS_ENABLE;
++	writel(gfs, mmss + TP_GFX3D_GFS_CTL);
++	mb();
++	msleep(20);
++
++	/* power up: rail on (resets still asserted), unclamp, release the resets, toggle the core reset again */
++	gfs |= TP_GFS_ENABLE;
++	writel(gfs, mmss + TP_GFX3D_GFS_CTL);
++	mb();
++	udelay(1);
++	gfs &= ~TP_GFS_CLAMP;
++	writel(gfs, mmss + TP_GFX3D_GFS_CTL);
++	writel(readl(mmss + TP_SW_RESET_CORE) & ~TP_RESET_CORE_GFX3D, mmss + TP_SW_RESET_CORE);
++	writel(readl(mmss + TP_SW_RESET_AHB) & ~TP_RESET_AHB_GFX3D, mmss + TP_SW_RESET_AHB);
++	writel(readl(mmss + TP_SW_RESET_CORE) | TP_RESET_CORE_GFX3D, mmss + TP_SW_RESET_CORE);
++	udelay(1);
++	writel(readl(mmss + TP_SW_RESET_CORE) & ~TP_RESET_CORE_GFX3D, mmss + TP_SW_RESET_CORE);
++	udelay(1);
++	/* keep the core memories when the clock is gated, as downstream does after footswitch_enable */
++	writel(readl(mmss + TP_GFX3D_CC) | TP_GFX3D_CC_RETAIN, mmss + TP_GFX3D_CC);
++	mb();
++
++	if (rate)
++		clk_set_rate(gpu->core_clk, rate);
++	dev_info(&gpu->pdev->dev, "GFX3D power cycle done: GFS_CTL %08x GFX3D_CC %08x\n",
++		 readl(mmss + TP_GFX3D_GFS_CTL), readl(mmss + TP_GFX3D_CC));
++	iounmap(mmss);
++}
++
+ static int a2xx_hw_init(struct msm_gpu *gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+@@ -117,6 +205,8 @@
+ 
+ 	DBG("%s", gpu->name);
+ 
++	a2xx_msm8660_gfx3d_power_cycle(gpu);
++
+ 	/* halt ME to avoid ucode upload issues on a20x */
+ 	gpu_write(gpu, REG_AXXX_CP_ME_CNTL, AXXX_CP_ME_CNTL_HALT);
+ 

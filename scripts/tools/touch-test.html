@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- Touch test page for Cog on the tablet: draws every touch/pointer point, shows the last coordinates and the event
+     types received, and marks the four corners and the centre as targets. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Touch test</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #111; color: #eee; font: 20px sans-serif; touch-action: none; }
+  canvas { position: fixed; inset: 0; }
+  .t { position: fixed; width: 60px; height: 60px; border: 3px solid #fc3; border-radius: 50%; box-sizing: border-box; }
+  #info { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+  #clear { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); padding: 12px 28px; font-size: 22px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="t" style="left:20px;top:20px"></div>
+<div class="t" style="right:20px;top:20px"></div>
+<div class="t" style="right:20px;bottom:20px"></div>
+<div class="t" style="left:20px;bottom:20px"></div>
+<div id="info">Touch the yellow circles<br><span id="xy">-</span><br><span id="ev">-</span></div>
+<button id="clear">Clear</button>
+<script>
+const c = document.getElementById('c'), g = c.getContext('2d');
+function size() { c.width = innerWidth; c.height = innerHeight; }
+size(); addEventListener('resize', size);
+const counts = {};
+function dot(x, y, color, type) {
+  g.fillStyle = color; g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill();
+  document.getElementById('xy').textContent = Math.round(x) + ', ' + Math.round(y) + '  (' + innerWidth + 'x' + innerHeight + ')';
+  counts[type] = (counts[type] || 0) + 1;
+  document.getElementById('ev').textContent = Object.entries(counts).map(([k, v]) => k + ':' + v).join('  ');
+}
+for (const t of ['touchstart', 'touchmove'])
+  addEventListener(t, e => { for (const p of e.changedTouches) dot(p.clientX, p.clientY, t === 'touchstart' ? '#f44' : '#4cf', t); e.preventDefault(); }, { passive: false });
+for (const t of ['pointerdown', 'pointermove'])
+  addEventListener(t, e => { if (e.buttons || t === 'pointerdown') dot(e.clientX, e.clientY, '#6f6', t + '/' + e.pointerType); });
+document.getElementById('clear').addEventListener('click', () => { g.clearRect(0, 0, c.width, c.height); for (const k in counts) delete counts[k]; });
+</script>
+</body>
+</html>

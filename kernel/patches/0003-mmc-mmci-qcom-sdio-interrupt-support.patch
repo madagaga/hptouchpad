@@ -1,0 +1,54 @@
+--- a/drivers/mmc/host/mmci.c	2026-10-15 13:34:18.106228210 +0000
++++ b/drivers/mmc/host/mmci.c	2026-10-15 13:34:18.106228210 +0000
+@@ -362,6 +362,8 @@
+ 	.explicit_mclk_control	= true,
+ 	.qcom_fifo		= true,
+ 	.qcom_dml		= true,
++	.supports_sdio_irq	= true,
++	.sdio_irq_bit		= MCI_QCOM_SDIOINTOPE | MCI_ST_SDIOIT,
+ 	.mmcimask1		= true,
+ 	.irq_pio_mask		= MCI_IRQ_PIO_MASK,
+ 	.start_err		= MCI_STARTBITERR,
+@@ -1780,15 +1782,19 @@
+ 	void __iomem *base = host->base;
+ 	u32 mask = readl_relaxed(base + MMCIMASK0);
+ 
++	u32 bit = host->variant->sdio_irq_bit ? host->variant->sdio_irq_bit : MCI_ST_SDIOITMASK;
++
+ 	if (enable)
+-		writel_relaxed(mask | MCI_ST_SDIOITMASK, base + MMCIMASK0);
++		writel_relaxed(mask | bit, base + MMCIMASK0);
+ 	else
+-		writel_relaxed(mask & ~MCI_ST_SDIOITMASK, base + MMCIMASK0);
++		writel_relaxed(mask & ~bit, base + MMCIMASK0);
+ }
+ 
+ static void mmci_signal_sdio_irq(struct mmci_host *host, u32 status)
+ {
+-	if (status & MCI_ST_SDIOIT) {
++	u32 bit = host->variant->sdio_irq_bit ? host->variant->sdio_irq_bit : MCI_ST_SDIOIT;
++
++	if (status & bit) {
+ 		mmci_write_sdio_irq_bit(host, 0);
+ 		sdio_signal_irq(host->mmc);
+ 	}
+--- a/drivers/mmc/host/mmci.h	2026-10-15 13:34:18.106228210 +0000
++++ b/drivers/mmc/host/mmci.h	2026-10-15 13:34:18.106228210 +0000
+@@ -162,6 +162,8 @@
+ #define MCI_ST_SDIOIT		(1 << 22)
+ #define MCI_ST_CEATAEND		(1 << 23)
+ #define MCI_ST_CARDBUSY		(1 << 24)
++/* Qualcomm: SDIO interrupt in operation (bus active). When the bus is idle only bit 22 is set. */
++#define MCI_QCOM_SDIOINTOPE	(1 << 25)
+ /* Qualcomm: the card left its programming (busy) phase, set for commands sent with PROGENA */
+ #define MCI_QCOM_PROGDONE	(1 << 23)
+ /* Extended status bits for the STM32 variants */
+@@ -381,6 +383,8 @@
+ 	u32			opendrain;
+ 	u8			dma_lli:1;
+ 	bool			supports_sdio_irq;
++	/* bits of MMCISTATUS/MMCIMASK0 for the SDIO card interrupt, 0 = MCI_ST_SDIOIT only */
++	u32			sdio_irq_bit;
+ 	u32			stm32_idmabsize_mask;
+ 	u32			stm32_idmabsize_align;
+ 	bool			dma_flow_controller;

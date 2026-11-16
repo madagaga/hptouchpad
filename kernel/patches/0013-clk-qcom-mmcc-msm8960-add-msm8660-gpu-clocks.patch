@@ -1,0 +1,144 @@
+--- a/drivers/clk/qcom/mmcc-msm8960.c	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/clk/qcom/mmcc-msm8960.c	2026-10-26 16:51:41.734480904 +0000
+@@ -989,6 +989,24 @@
+ 	{ }
+ };
+ 
++static const struct freq_tbl clk_tbl_gfx3d_8660[] = {
++	F_MN( 27000000, P_PXO,   0,  0),
++	F_MN( 48000000, P_PLL8,  1,  8),
++	F_MN( 54857000, P_PLL8,  1,  7),
++	F_MN( 64000000, P_PLL8,  1,  6),
++	F_MN( 76800000, P_PLL8,  1,  5),
++	F_MN( 96000000, P_PLL8,  1,  4),
++	F_MN(128000000, P_PLL8,  1,  3),
++	F_MN(145455000, P_PLL2,  2, 11),
++	F_MN(160000000, P_PLL2,  1,  5),
++	F_MN(177778000, P_PLL2,  2,  9),
++	F_MN(200000000, P_PLL2,  1,  4),
++	F_MN(228571000, P_PLL2,  2,  7),
++	F_MN(266667000, P_PLL2,  1,  3),
++	F_MN(320000000, P_PLL2,  2,  5),
++	{ }
++};
++
+ static struct clk_dyn_rcg gfx3d_src = {
+ 	.ns_reg[0] = 0x008c,
+ 	.ns_reg[1] = 0x008c,
+@@ -3080,6 +3098,85 @@
+ 	.fast_io	= true,
+ };
+ 
++/* MSM8660 variants of the branches above: same enable bits, no hardware clock gating register */
++static struct clk_branch gfx3d_ahb_clk_8660 = {
++	.halt_reg = 0x01dc,
++	.halt_bit = 4,
++	.clkr = {
++		.enable_reg = 0x0008,
++		.enable_mask = BIT(3),
++		.hw.init = &(struct clk_init_data){
++			.name = "gfx3d_ahb_clk",
++			.ops = &clk_branch_ops,
++		},
++	},
++};
++
++static struct clk_branch mmss_imem_ahb_clk_8660 = {
++	.halt_reg = 0x01dc,
++	.halt_bit = 10,
++	.clkr = {
++		.enable_reg = 0x0008,
++		.enable_mask = BIT(6),
++		.hw.init = &(struct clk_init_data){
++			.name = "mmss_imem_ahb_clk",
++			.ops = &clk_branch_ops,
++		},
++	},
++};
++
++static struct clk_branch mmss_imem_axi_clk_8660 = {
++	.halt_reg = 0x01d8,
++	.halt_bit = 7,
++	.clkr = {
++		.enable_reg = 0x0018,
++		.enable_mask = BIT(22),
++		.hw.init = &(struct clk_init_data){
++			.name = "mmss_imem_axi_clk",
++			.ops = &clk_branch_ops,
++		},
++	},
++};
++
++/* GMEM AXI clock (vendor gmem_axi_clk), the GFX3D core clock depends on it: exposed as GFX3D_AXI_CLK */
++static struct clk_branch gmem_axi_clk_8660 = {
++	.halt_reg = 0x01d8,
++	.halt_bit = 6,
++	.clkr = {
++		.enable_reg = 0x0018,
++		.enable_mask = BIT(24),
++		.hw.init = &(struct clk_init_data){
++			.name = "gmem_axi_clk",
++			.ops = &clk_branch_ops,
++		},
++	},
++};
++
++static struct clk_regmap *mmcc_msm8660_clks[] = {
++	[PLL2] = &pll2.clkr,
++	[GFX3D_SRC] = &gfx3d_src.clkr,
++	[GFX3D_CLK] = &gfx3d_clk.clkr,
++	[GFX3D_AHB_CLK] = &gfx3d_ahb_clk_8660.clkr,
++	[GFX3D_AXI_CLK] = &gmem_axi_clk_8660.clkr,
++	[MMSS_IMEM_AXI_CLK] = &mmss_imem_axi_clk_8660.clkr,
++	[MMSS_IMEM_AHB_CLK] = &mmss_imem_ahb_clk_8660.clkr,
++	[CAMCLK0_SRC] = &camclk0_src.clkr,
++	[CAMCLK0_CLK] = &camclk0_clk.clkr,
++};
++
++static const struct qcom_reset_map mmcc_msm8660_resets[] = {
++	[GFX3D_AHB_RESET] = { 0x020c, 10 },
++	[GFX3D_RESET] = { 0x0210, 12 },
++};
++
++static const struct qcom_cc_desc mmcc_msm8660_desc = {
++	.config = &mmcc_msm8960_regmap_config,
++	.clks = mmcc_msm8660_clks,
++	.num_clks = ARRAY_SIZE(mmcc_msm8660_clks),
++	.resets = mmcc_msm8660_resets,
++	.num_resets = ARRAY_SIZE(mmcc_msm8660_resets),
++};
++
+ static const struct qcom_cc_desc mmcc_msm8960_desc = {
+ 	.config = &mmcc_msm8960_regmap_config,
+ 	.clks = mmcc_msm8960_clks,
+@@ -3098,6 +3195,7 @@
+ 
+ static const struct of_device_id mmcc_msm8960_match_table[] = {
+ 	{ .compatible = "qcom,mmcc-msm8960", .data = &mmcc_msm8960_desc },
++	{ .compatible = "qcom,mmcc-msm8660", .data = &mmcc_msm8660_desc },
+ 	{ .compatible = "qcom,mmcc-apq8064", .data = &mmcc_apq8064_desc },
+ 	{ }
+ };
+@@ -3116,11 +3214,21 @@
+ 		gfx3d_src.s[1].parent_map = mmcc_pxo_pll8_pll2_pll15_map;
+ 	}
+ 
++	if (desc == &mmcc_msm8660_desc) {
++		/* same registers as the 8960, other reset bits of the two RCG banks and the 8x60 rate table */
++		gfx3d_src.freq_tbl = clk_tbl_gfx3d_8660;
++		gfx3d_src.mn[0].mnctr_reset_bit = 23;
++		gfx3d_src.mn[1].mnctr_reset_bit = 22;
++		/* the 8x60 camera clock has no halt status bit (vendor cam_clk: halt_check = DELAY) */
++		camclk0_clk.halt_check = BRANCH_HALT_DELAY;
++	}
++
+ 	regmap = qcom_cc_map(pdev, desc);
+ 	if (IS_ERR(regmap))
+ 		return PTR_ERR(regmap);
+ 
+-	clk_pll_configure_sr(&pll15, regmap, &pll15_config, false);
++	if (desc != &mmcc_msm8660_desc)
++		clk_pll_configure_sr(&pll15, regmap, &pll15_config, false);
+ 
+ 	return qcom_cc_really_probe(&pdev->dev, desc, regmap);
+ }

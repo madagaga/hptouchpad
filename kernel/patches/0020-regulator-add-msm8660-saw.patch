@@ -1,0 +1,28 @@
+diff -ru a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
+--- a/drivers/regulator/Kconfig	2026-10-29 18:18:34.444926221 +0000
++++ b/drivers/regulator/Kconfig	2026-10-29 18:18:34.448926540 +0000
+@@ -1064,6 +1064,13 @@
+ 	  Say M here if you want to include support for this regulator as
+ 	  a module. The module will be named "qcom-refgen-regulator".
+ 
++config REGULATOR_MSM8660_SAW
++	tristate "Qualcomm MSM8660 SAW core voltage regulator"
++	depends on ARCH_QCOM || COMPILE_TEST
++	help
++	  Core voltage (PM8901 S0/S1 driven by the SAW of each core) of the
++	  Scorpion CPUs of the MSM8660 and APQ8060 (HP TouchPad).
++
+ config REGULATOR_QCOM_RPM
+ 	tristate "Qualcomm RPM regulator driver"
+ 	depends on MFD_QCOM_RPM
+diff -ru a/drivers/regulator/Makefile b/drivers/regulator/Makefile
+--- a/drivers/regulator/Makefile	2026-10-29 18:18:34.444926221 +0000
++++ b/drivers/regulator/Makefile	2026-10-29 18:18:34.448926540 +0000
+@@ -116,6 +116,7 @@
+ obj-$(CONFIG_REGULATOR_QCOM_LABIBB) += qcom-labibb-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_PM8008) += qcom-pm8008-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_REFGEN) += qcom-refgen-regulator.o
++obj-$(CONFIG_REGULATOR_MSM8660_SAW) += msm8660-saw-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_RPM) += qcom_rpm-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_RPMH) += qcom-rpmh-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_SMD_RPM) += qcom_smd-regulator.o

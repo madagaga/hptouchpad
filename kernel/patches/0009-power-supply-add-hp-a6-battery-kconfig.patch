@@ -1,0 +1,21 @@
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -1018,4 +1018,11 @@
+ 	  the state of charge, temperature, cycle count, actual and design
+ 	  capacity, etc.
+ 
++config BATTERY_HP_A6
++	tristate "HP TouchPad battery gauge (A6 microcontroller)"
++	depends on I2C
++	help
++	  Say Y here to read the battery of the HP TouchPad (capacity, voltage,
++	  current, temperature) from its A6 microcontroller over I2C.
++
+ endif # POWER_SUPPLY
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -117,3 +117,4 @@
+ obj-$(CONFIG_BATTERY_UG3105)	+= ug3105_battery.o
+ obj-$(CONFIG_CHARGER_QCOM_SMB2)	+= qcom_pmi8998_charger.o
+ obj-$(CONFIG_FUEL_GAUGE_MM8013)	+= mm8013.o
++obj-$(CONFIG_BATTERY_HP_A6)	+= hp_a6_battery.o

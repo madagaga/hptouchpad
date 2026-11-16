@@ -1,0 +1,32 @@
+#!/bin/sh
+# Decodes the CPU clock state from the SoC registers (see STATUS.md, "CPU frequency"):
+#   CPU n:  ACC (clock mux) at 0x02041000 + n * 0x10000: CLK_CTL +4, CLK_SEL +8
+#   SCPLL:  0x00903200 (CPU0), 0x00903300 (CPU1), 0x00903400 (L2); CTL +4: mode bits 2:0 (7 = normal),
+#           L value bits 8:3, frequency = 2 * 27 MHz * L
+#   L2:     source select at GCC + 0x38 (0x02082038), bits 1:0
+# CLK_SEL bits 2:1 = core source: 1 = SCPLL, 0 = bank mux (CLK_SEL bit 0 picks the bank; in CLK_CTL each
+# bank byte is source << 4 | divider; source 3 = PLL8 384 MHz / (div + 1), source 1 = AFAB).
+for n in 0 1; do
+  acc=$((0x02041000 + n * 0x10000)); pll=$((0x00903200 + n * 0x100))
+  sel=$(devmem $((acc + 8)) 32); ctl=$(devmem $((acc + 4)) 32)
+  src=$(( (sel >> 1) & 3 ))
+  if [ $src = 1 ]; then
+    c=$(devmem $((pll + 4)) 32); l=$(( (c >> 3) & 0x3f ))
+    echo "cpu$n: SCPLL L=$l -> $((54 * l)) MHz (pll mode $((c & 7)))"
+  elif [ $src = 0 ]; then
+    bank=$((sel & 1)); byte=$(( (ctl >> (8 * bank)) & 0xff )); s=$((byte >> 4)); d=$((byte & 15))
+    case $s in
+      3) echo "cpu$n: PLL8 384 MHz / $((d + 1)) = $((384 / (d + 1))) MHz" ;;
+      1) echo "cpu$n: AFAB clock (bus clock, ~310 MHz at most)" ;;
+      *) echo "cpu$n: bank source $s divider $d" ;;
+    esac
+  else
+    echo "cpu$n: core source $src (sel=$sel)"
+  fi
+done
+l2=$(( $(devmem 0x02082038 32) & 3 ))
+if [ $l2 = 1 ]; then
+  c=$(devmem 0x00903404 32); l=$(( (c >> 3) & 0x3f )); echo "L2: SCPLL L=$l -> $((54 * l)) MHz"
+else
+  echo "L2: source $l2"
+fi

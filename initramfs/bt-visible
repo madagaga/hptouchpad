@@ -1,0 +1,17 @@
+#!/bin/sh
+# Makes the tablet discoverable and connectable ("HP TouchPad", laptop class like CyanogenMod) and keeps
+# running inquiries for a while, to check the radio in both directions. Run bt-test first.
+# Usage: bt-visible [seconds]       (default 90)
+T=${1:-90}
+N="48 50 20 54 6f 75 63 68 50 61 64"          # "HP TouchPad"
+Z=""; i=0; while [ $i -lt 237 ]; do Z="$Z 00"; i=$((i+1)); done
+hcitool -i hci0 cmd 0x03 0x0013 $N $Z | tail -1       # Write Local Name
+hcitool -i hci0 cmd 0x03 0x0024 0c 01 1a | tail -1    # Write Class of Device 0x1A010C
+hcitool -i hci0 cmd 0x03 0x001a 03 | tail -1          # Write Scan Enable: inquiry + page scan
+echo "visible for $T s: scan for Bluetooth devices from the phone"
+end=$(( $(date +%s) + T ))
+while [ $(date +%s) -lt $end ]; do
+  hcitool -i hci0 scan --length=4 --flush 2>&1 | tail -n +2
+  sleep 1
+done
+echo "== done"

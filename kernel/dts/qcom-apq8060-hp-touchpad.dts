@@ -1,0 +1,1356 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * HP TouchPad (APQ8060, "topaz"/"tenderloin") - first-boot device tree.
+ *
+ * Values read from the stock webOS (2.6.35-palm-tenderloin) over novacom:
+ *  - /proc/iomem : System RAM 40200000-466fffff and 48000000-7f5fffff
+ *  - cmdline     : fb=0x7f600000, klog=0x7ff00000 klog_len=0x100000, root=/dev/mmcblk0p13
+ *  - fb0         : 1024x768 visible, virtual 1024x2304 (3 pages), stride 4096, 32 bpp
+ *
+ * See STATUS.md for what is verified and what is still missing.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/mfd/qcom-rpm.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/media/video-interfaces.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/reset/qcom,gcc-msm8660.h>
+#include <dt-bindings/clock/qcom,mmcc-msm8960.h>
+#include <dt-bindings/clock/qcom,rpmcc.h>
+#include <dt-bindings/clock/qcom,lcc-msm8960.h>
+#include <dt-bindings/thermal/thermal.h>
+#include "qcom-msm8660.dtsi"
+#include "pm8058.dtsi"
+
+/ {
+	model = "HP TouchPad";
+	compatible = "hp,touchpad", "qcom,apq8060";
+
+	aliases {
+		serial0 = &gsbi12_serial;
+		serial1 = &gsbi6_serial;
+		/* touch panel raw data (ttyMSM2) */
+		serial2 = &gsbi10_serial;
+		/* fixed host numbers: the two controllers probe in a random order, and initramfs/init and bt-power use /dev/mmcblk0 (eMMC) */
+		mmc0 = &sdcc1;
+		mmc1 = &sdcc4;
+		/*
+		 * fixed I2C bus numbers (address order otherwise): ts_srv opens /dev/i2c-1 (GSBI10 touch controller); the audio
+		 * codec bus GSBI7 (0x16680000) took i2c-0 and shifted the others (2026-11-08, touch broken)
+		 */
+		i2c0 = &gsbi8_i2c;
+		i2c1 = &gsbi10_i2c;
+		i2c2 = &gsbi4_i2c;
+		i2c3 = &gsbi7_i2c;
+	};
+
+	chosen {
+		/*
+		 * clk/regulator_ignore_unused: there are no drivers yet for the display and the RPM
+		 * consumers, so the kernel must not switch off what the HP bootloader left running
+		 * (LG panel, MDP clocks).
+		 */
+		bootargs = "console=tty0 earlycon=simple loglevel=6 rdinit=/init clk_ignore_unused regulator_ignore_unused ath6kl_core.btcoex_dev=2 ath6kl_core.btcoex_ant=2";
+		stdout-path = "serial0:115200n8";
+
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* Left by the bootloader: 1024x768 visible, 3 pages, stride 4096. */
+		framebuffer0: framebuffer@7f600000 {
+			compatible = "simple-framebuffer";
+			reg = <0x7f600000 0x900000>;
+			width = <1024>;
+			height = <768>;
+			stride = <4096>;
+			format = "a8r8g8b8";
+			memory-region = <&fb_mem>;
+		};
+	};
+
+	/* Main board supply (battery, about 3.7 V). */
+	vph: regulator-fixed {
+		compatible = "regulator-fixed";
+		regulator-name = "VPH";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/*
+	 * Wi-Fi power sequence of the downstream board file: rails first, then 5 ms, then the
+	 * CHIP_PWD/WLAN_RST_N line (GPIO 135, released high). Active low reset.
+	 */
+	wifi_pwrseq: wifi-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		reset-gpios = <&tlmm 135 GPIO_ACTIVE_LOW>;
+		post-power-on-delay-ms = <500>;
+	};
+
+	memory@40200000 {
+		device_type = "memory";
+		reg = <0x40200000 0x06500000>,
+		      <0x48000000 0x37600000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		fb_mem: framebuffer@7f600000 {
+			reg = <0x7f600000 0x900000>;
+			no-map;
+		};
+
+		/*
+		 * VRAM of the msm DRM driver. With an a2xx GPU (its own GPU MMU) msm allocates no VRAM unless a "memory-region" is given, and
+		 * the scanout buffers of the MDP4 (no IOMMU) must be physically contiguous: without it the framebuffer lands in scattered
+		 * shmem pages and the screen shows garbage (blue with lines). It must be "reusable" (a CMA area, pages with a struct page):
+		 * msm builds its VRAM pages with phys_to_page(), a "no-map" region has none and hangs the kernel.
+		 */
+		vram_mem: vram@7a000000 {
+			compatible = "shared-dma-pool";
+			reusable;
+			reg = <0x7a000000 0x2000000>;
+		};
+
+		/*
+		 * Video codec (VIDC 1080p, driver qcom-vidc of the LuneOS port): the SMI (stacked memory, 64 MiB at 0x38000000, vendor
+		 * MSM_SMI_BASE) holds the firmware and every buffer the core sees (the core addresses them as offsets from its DRAM base).
+		 * [0] firmware code and scratch (3 MiB, ioremapped by the driver), [1] bitstream and reference frames (61 MiB, the
+		 * coherent DMA pool of the codec). The order is fixed: the driver takes the indexes of its memory-region.
+		 */
+		vidc_fw_mem: vidc-fw@38000000 {
+			reg = <0x38000000 0x300000>;
+			no-map;
+		};
+
+		vidc_smipool_mem: vidc-smipool@38300000 {
+			compatible = "shared-dma-pool";
+			reg = <0x38300000 0x3d00000>;
+			no-map;
+		};
+
+		/* webOS "klog" buffer, reused as ramoops to recover logs after a reboot. */
+		ramoops@7ff00000 {
+			compatible = "ramoops";
+			reg = <0x7ff00000 0x100000>;
+			console-size = <0x80000>;
+			record-size = <0x20000>;
+			pmsg-size = <0x20000>;
+			no-map;
+		};
+	};
+};
+
+/*
+ * USB: ChipIdea controller at 12500000 (msm_otg/msm_hsusb on webOS, IRQ 132 = SPI 100),
+ * ULPI PHY. Peripheral mode only for now (ECM/ACM gadget used for debugging). VBUS: extcon of the
+ * charger driver (EXTCON_USB only for a port that can enumerate us, after the D+/D- detection).
+ * Node derived from the APQ8064 one.
+ */
+&soc {
+	/* Restart through PS_HOLD (TLMM base 0x00800000 + 0x820), as in the downstream arch_reset(). */
+	restart@800820 {
+		compatible = "qcom,pshold";
+		reg = <0x00800820 0x4>;
+	};
+
+	usb1: usb@12500000 {
+		compatible = "qcom,ci-hdrc";
+		reg = <0x12500000 0x200>,
+		      <0x12500200 0x200>;
+		interrupts = <GIC_SPI 100 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&gcc USB_HS1_XCVR_CLK>, <&gcc USB_HS1_H_CLK>;
+		clock-names = "core", "iface";
+		assigned-clocks = <&gcc USB_HS1_XCVR_CLK>;
+		assigned-clock-rates = <60000000>;
+		resets = <&gcc USB_HS1_RESET>;
+		reset-names = "core";
+		phy_type = "ulpi";
+		dr_mode = "peripheral";
+		ahb-burst-config = <0>;
+		phys = <&usb_hs1_phy>;
+		phy-names = "usb-phy";
+		/* VBUS comes from the charger driver: the cable is on the MAX8903 DC input, the PHY does not see it */
+		extcon = <&charger>;
+		#reset-cells = <1>;
+
+		ulpi {
+			usb_hs1_phy: phy {
+				compatible = "qcom,usb-hs-phy-msm8660",
+					     "qcom,usb-hs-phy";
+				clocks = <&{/clocks/sleep-clk}>, <&cxo_board>;
+				clock-names = "sleep", "ref";
+				v1p8-supply = <&pm8058_s3>;
+				v3p3-supply = <&pm8058_l6>;
+				resets = <&usb1 0>;
+				reset-names = "por";
+				extcon = <&charger>;
+				#phy-cells = <0>;
+			};
+		};
+	};
+};
+
+/*
+ * Hardware watchdog: the qcom_wdt driver binds to the SoC timer node and needs its input clock, the
+ * 32.768 kHz sleep clock (the downstream restart code programs the bark/bite times for that rate).
+ */
+&{/soc/timer@2000000} {
+	clocks = <&{/clocks/sleep-clk}>;
+};
+
+/* PM8058 PMIC: the IRQ is on GPIO 88 (confirmed by "gpio 88 triggered wake" in the webOS dmesg). */
+&pm8058 {
+	interrupts-extended = <&tlmm 88 IRQ_TYPE_LEVEL_LOW>;
+
+	/* LPG channel 0 drives the backlight (the vendor board file requests channel 0 as "backlight"). */
+	pm8058_lpg: pwm@13c {
+		compatible = "qcom,pm8058-lpg";
+		reg = <0x13c>;
+		#pwm-cells = <2>;
+	};
+};
+
+/*
+ * LCD backlight: PWM of the PM8058 LPG channel 0 (20 kHz, the TPS61187 LED driver accepts up to 22 kHz) and the
+ * enable pin PM8058 GPIO 25 (BACKLIGHT_EN). The levels give 0..100 in /sys/class/backlight/backlight/brightness.
+ * The 5 V boost (TLMM GPIO 102) is still left on by the bootloader.
+ */
+&{/} {
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pm8058_lpg 0 50000>;
+		enable-gpios = <&pm8058_gpio 25 GPIO_ACTIVE_HIGH>;
+		brightness-levels = <0 8 32 80 150 255>;
+		num-interpolated-steps = <20>;
+		default-brightness-level = <60>;
+	};
+};
+
+/*
+ * eMMC (SEM16G, 14.8 GiB): SDCC1 at 12400000, 8-bit bus.
+ * Supplies: PM8901 L5 (2.85 V) and LVS0, as in the 2022 mainline TouchPad patch series by
+ * Ben Wolsieffer (linux-arm-msm, "ARM: dts: qcom: basic HP TouchPad support").
+ */
+&sdcc1 {
+	vmmc-supply = <&pm8901_l5>;
+	vqmmc-supply = <&pm8901_lvs0>;
+	status = "okay";
+};
+
+/*
+ * Wi-Fi: Atheros AR6003 on SDCC4 (121c0000), 4-bit SDIO. Supplies from the downstream board file:
+ * PM8901 L1 (VDD_WLAN_3V3, vmmc), PM8901 L3 (WLAN_PA_3V3), PM8058 L19 (VDD 1.8 V), PM8058 S3
+ * (SDIO I/O 1.8 V, already always-on). L3 and L19 have no consumer yet, so they are always-on.
+ */
+&sdcc4 {
+	/*
+	 * The MSM SDCC does not wait for the AR6003 to leave the busy state after a CMD53 write (the
+	 * stock webOS kernel enabled "dummy52_required" for SDC4): mmci inserts a dummy CMD52 with
+	 * PROGENA. See kernel/patches/0001-*.patch.
+	 */
+	qcom,dummy52-required;
+	/*
+	 * The AR6003 signals its interrupts in-band on DAT1 only: the generic polling of the MMC core
+	 * (CCCR interrupt pending bits) misses them after the first transfers, so the scan results
+	 * and every other event stay in the chip. Use the controller SDIO interrupt (patch 0006).
+	 */
+	cap-sdio-irq;
+	vmmc-supply = <&pm8901_l1>;
+	vqmmc-supply = <&pm8058_s3>;
+	mmc-pwrseq = <&wifi_pwrseq>;
+	non-removable;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdcc4_pins>, <&wifi_wake_pins>;
+	status = "okay";
+};
+
+&tlmm {
+	/*
+	 * Wi-Fi sideband lines, as set by the downstream gpiomux table: WL_HOST_WAKE (GPIO 93) is an
+	 * input with a pull-down; HOST_WAKE_WL (GPIO 137) must be driven high while the Wi-Fi is in
+	 * use, otherwise the AR6003 stays asleep and never answers on SDIO (seen: every command
+	 * times out with this line left as an input).
+	 */
+	wifi_wake_pins: wifi-wake-state {
+		wl-host-wake-pins {
+			pins = "gpio93";
+			function = "gpio";
+			input-enable;
+			bias-pull-down;
+			drive-strength = <8>;
+		};
+		host-wake-wl-pins {
+			pins = "gpio137";
+			function = "gpio";
+			output-high;
+			bias-disable;
+			drive-strength = <8>;
+		};
+	};
+
+	/*
+	 * Bluetooth (CSR BC6 on the GSBI6 UART with flow control). Pads as in the downstream gpiomux
+	 * table: UART function 1, 8 mA, no pull; BT_POWER (GPIO 130, high = on), BT_WAKE (131) and
+	 * BT_RST_N (138, active low) are outputs that start low (chip off, in reset): the power-up
+	 * sequence (power high, then a reset pulse) is done from userspace, see initramfs/bt-test.
+	 * BT_HOST_WAKE (129) is an input with a pull-up.
+	 */
+	bt_uart_pins: bt-uart-state {
+		pins = "gpio53", "gpio54", "gpio55", "gpio56";
+		function = "gsbi6";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	bt_ctrl_pins: bt-ctrl-state {
+		bt-output-pins {
+			pins = "gpio130", "gpio131", "gpio138";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-disable;
+			output-low;
+		};
+		bt-host-wake-pins {
+			pins = "gpio129";
+			function = "gpio";
+			input-enable;
+			bias-pull-up;
+			drive-strength = <8>;
+		};
+	};
+
+	sdcc4_pins: sdcc4-state {
+		clk-pins {
+			pins = "sdc4_clk";
+			drive-strength = <8>;
+			bias-disable;
+		};
+		cmd-data-pins {
+			pins = "sdc4_cmd", "sdc4_data";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+};
+
+/*
+ * RPM regulators: only the ones in use. Voltages are taken from the dragonboard (same PMICs).
+ * The eMMC rails (PM8901 L5 / LVS0) come from the mainline TouchPad patches. The USB PHY rails
+ * (PM8058 S3 = 1.8 V, L6 = 3.3 V) are an educated guess, still to be confirmed.
+ * Only PM8058 S3 and PM8901 LVS0 are always-on.
+ */
+&rpm {
+	regulators-0 {
+		compatible = "qcom,rpm-pm8901-regulators";
+
+		vdd_l1-supply = <&vph>;
+		vdd_l3-supply = <&vph>;
+		vdd_l5-supply = <&vph>;
+		lvs0_in-supply = <&pm8058_s3>;
+
+		pm8901_l5: l5 {
+			regulator-min-microvolt = <2850000>;
+			regulator-max-microvolt = <2850000>;
+			bias-pull-down;
+		};
+
+		pm8901_lvs0: lvs0 {
+			regulator-always-on;
+		};
+
+		pm8901_l1: l1 {
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			bias-pull-down;
+		};
+
+		pm8901_l3: l3 {
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-always-on;
+			bias-pull-down;
+		};
+	};
+
+	regulators-1 {
+		compatible = "qcom,rpm-pm8058-regulators";
+
+		vdd_l6_l7-supply = <&vph>;
+		vdd_l10-supply = <&vph>;
+		vdd_l19_l20-supply = <&vph>;
+		vdd_s3-supply = <&vph>;
+		vdd_s0-supply = <&vph>;
+		vdd_s1-supply = <&vph>;
+		vdd_l2_l11_l12-supply = <&vph>;
+		vdd_l0_l1_lvs-supply = <&pm8058_s3>;
+
+		/* Front camera (MT9M113): analog 2.85 V (vendor RPM_LDO(PM8058_L11, ... 2850000)) */
+		pm8058_l11: l11 {
+			regulator-min-microvolt = <2850000>;
+			regulator-max-microvolt = <2850000>;
+			bias-pull-down;
+		};
+
+		/* Front camera (MT9M113): 1.8 V digital/IO switch from S3 (vendor "8058_lvs0") */
+		pm8058_lvs0: lvs0 {
+			bias-pull-down;
+		};
+
+		pm8058_l19: l19 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+			bias-pull-down;
+		};
+
+		/* VDD_LVDS 3.3 V of the display serializer (3.05 V in the vendor board file), left on by the bootloader. */
+		pm8058_l10: l10 {
+			regulator-min-microvolt = <3050000>;
+			regulator-max-microvolt = <3050000>;
+			regulator-boot-on;
+			bias-pull-down;
+		};
+
+		pm8058_l6: l6 {
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3600000>;
+			bias-pull-down;
+		};
+
+		/*
+		 * vdd_mem (S0) and vdd_dig (S1) of the Scorpion cores and their L2 (vendor board-tenderloin-regulator.c:
+		 * RPM_SMPS 1.6 MHz, acpuclock-8x60.c vreg_id_vdd_mem/vdd_dig). vdd_mem is held at the vendor maximum (1.2 V,
+		 * L2 1080-1188 MHz) so that it always stays above vdd_sc; vdd_dig follows the L2 in clk-scorpion-acpu.c
+		 * (1.1 V, 1.2 V at L2 1188 MHz).
+		 */
+		pm8058_s0: s0 {
+			regulator-name = "vdd_mem";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			qcom,switch-mode-frequency = <1600000>;
+			regulator-always-on;
+		};
+
+		pm8058_s1: s1 {
+			regulator-name = "vdd_dig";
+			regulator-min-microvolt = <1100000>;
+			regulator-max-microvolt = <1200000>;
+			qcom,switch-mode-frequency = <1600000>;
+			regulator-always-on;
+		};
+
+		pm8058_s3: s3 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			qcom,switch-mode-frequency = <1600000>;
+			/*
+			 * 1.8 V rail of the Wi-Fi chip and of the SDIO I/O. The stock webOS kernel declares an
+			 * 80 mA load on it when the Wi-Fi is on (regulator_set_optimum_mode, which puts the
+			 * supply in high power mode) and only 10 mA when it is off.
+			 */
+			qcom,force-mode = <QCOM_RPM_FORCE_MODE_HPM>;
+			regulator-always-on;
+			bias-pull-down;
+		};
+	};
+};
+
+/*
+ * TODO, not described yet (missing driver or missing information):
+ *  - Bluetooth: CSR BC6 on GSBI6 (UART at 16540000, GPIO 53-56), BT_POWER = GPIO 130,
+ *    BT_WAKE = 131, BT_RST_N = 138, BT_HOST_WAKE = 129 (none described yet)
+ *  - "A6" touchscreen (Cypress, FW 2.13.25): no mainline driver
+ *  - WM8958 audio (I2C 0x1a, webOS "bus 4"): matching mainline GSBI to identify
+ *  - LG panel (LCDC) + backlight GPIO 197 / lm8502: driver to write
+ */
+
+&gsbi12 {
+	qcom,mode = <GSBI_PROT_I2C_UART>;
+	status = "okay";
+};
+
+&gsbi12_serial {
+	status = "okay";
+};
+
+/* Bluetooth UART: the HCI line discipline is attached from userspace (btattach, BCSP protocol). */
+&gsbi6 {
+	qcom,mode = <GSBI_PROT_UART_W_FC>;
+	status = "okay";
+};
+
+&gsbi6_serial {
+	pinctrl-names = "default";
+	pinctrl-0 = <&bt_uart_pins>, <&bt_ctrl_pins>;
+	status = "okay";
+};
+
+/*
+ * SoC temperature sensor (TSENS, sensor 0 only on the MSM8660). The registers are in the clock controller
+ * block (the driver uses it as a syscon), the calibration code at 30 C is in the QFPROM word 0xBC: byte
+ * 0xBE (primary) and 0xBF (redundant copy, wins when programmed). Thresholds: the vendor driver raised its
+ * upper stage at code 0xDF, about 109 C on this unit (calibration code 111, 0.702 C per code).
+ */
+&gcc {
+	compatible = "qcom,gcc-msm8660", "syscon";
+
+	tsens: thermal-sensor {
+		compatible = "qcom,msm8660-tsens";
+		nvmem-cells = <&tsens_calib>, <&tsens_calib_backup>;
+		nvmem-cell-names = "calib", "calib_backup";
+		/*
+		 * No "uplow" interrupt (GIC SPI 178) on purpose: for this old TSENS version the driver registers its
+		 * threaded handler as the hard interrupt handler, which calls thermal_zone_device_update() (a mutex):
+		 * when the threshold interrupt fires the kernel dies in interrupt context (seen as boots that hang
+		 * before init, depending on the thresholds left by the previous run). The zone is polled instead.
+		 */
+		#qcom,sensors = <1>;
+		#thermal-sensor-cells = <1>;
+	};
+};
+
+&{/soc} {
+	/*
+	 * CPU clocks: one SCPLL per core selected by the ACC block (0x02041000 / 0x02051000), the SCPLL registers are
+	 * in the global clock controller. 432 .. 756 MHz without voltage change (see STATUS.md).
+	 */
+	/*
+	 * Multimedia clock controller (MMSS, 0x04000000): only the clocks of the GPU for now, the display still uses the fixed clocks
+	 * below (the bootloader runs MDP and the LCDC pixel clock). Same block as the MSM8960 (compatible "qcom,mmcc-msm8660").
+	 */
+	mmcc: clock-controller@4000000 {
+		compatible = "qcom,mmcc-msm8660";
+		reg = <0x04000000 0x1000>;
+		#clock-cells = <1>;
+		#reset-cells = <1>;
+		clocks = <&pxo_board>, <0>, <&gcc PLL8_VOTE>, <0>, <0>, <0>, <0>, <0>;
+		clock-names = "pxo", "pll3", "pll8_vote", "dsi1pll", "dsi1pllbyte", "dsi2pll", "dsi2pllbyte", "hdmipll";
+	};
+
+	/*
+	 * Adreno 220 (a2xx, "yamato"/"leia"): 3D core at 0x04300000, interrupt GIC SPI 80 (GFX3D_IRQ), GMEM 512 KiB. Firmware
+	 * qcom/leia_pm4_470.fw and qcom/leia_pfp_470.fw. The footswitch (power) is already on when Linux starts (GFX3D_GFS_CTL =
+	 * 0x300), only its clock is off: no power domain driver yet. Disabled here, enabled by the KMS variant.
+	 */
+	gpu: gpu@4300000 {
+		compatible = "qcom,adreno-02020000", "qcom,adreno";
+		reg = <0x04300000 0x20000>;
+		reg-names = "kgsl_3d0_reg_memory";
+		interrupts = <GIC_SPI 80 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "kgsl_3d0_irq";
+		/*
+		 * The three clocks of Jonathan Marek's mainline TouchPad tree (core GFX3D, AHB interface, GMEM AXI), plus the bus fabric and memory
+		 * clocks owned by the RPM (the downstream kgsl votes 1.3 - 2.5 GB/s for GRAPHICS_3D; enabled without a rate they run at their
+		 * maximum while the GPU is on). Without them the fabrics stay at their idle rates and the MDP4 underruns (errors 0x100, flicker)
+		 * while the GPU works (2026-10-26).
+		 */
+		clocks = <&mmcc GFX3D_CLK>, <&mmcc GFX3D_AHB_CLK>, <&mmcc GFX3D_AXI_CLK>,
+			 <&rpmcc RPM_MM_FABRIC_CLK>, <&rpmcc RPM_SYS_FABRIC_CLK>,
+			 <&rpmcc RPM_APPS_FABRIC_CLK>, <&rpmcc RPM_EBI1_CLK>;
+		clock-names = "core_clk", "iface_clk", "mem_clk",
+			      "mmfab_clk", "sfab_clk", "afab_clk", "ebi1_clk";
+		operating-points-v2 = <&gpu_opp_table>;
+		status = "disabled";
+	};
+
+	/*
+	 * Display controller MDP4 (revision 4.1, registers 0x05100000), parallel RGB (LCDC) to the panel serializer.
+	 * The bootloader already runs the whole pipeline (MDP at 200 MHz, LCDC pixel clock 96 MHz from PLL8), so the clocks are
+	 * fixed clocks for now: a real MMSS clock controller is still to write (see STATUS.md). `qcom,lcdc-align-lsb`: the
+	 * bootloader/vendor DMA_P configuration is 0x0300212A (LSB aligned RGB666).
+	 */
+	mdp: display-controller@5100000 {
+		compatible = "qcom,msm8660-mdp4", "qcom,mdp4";
+		reg = <0x05100000 0xf0000>;
+		interrupts = <GIC_SPI 75 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&mdp_core_clk>, <&mdp_bus_clk>, <&lcdc_pixel_clk>;
+		clock-names = "core_clk", "bus_clk", "pixel_clk";
+		qcom,lcdc-align-lsb;
+		status = "disabled";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				mdp_lcdc_out: endpoint {
+					remote-endpoint = <&panel_in>;
+				};
+			};
+		};
+	};
+
+	acpu: clock-controller@2041000 {
+		compatible = "qcom,msm8660-acpu";
+		/* ACC of core 0, ACC of core 1, apps GCC (L2 source select) */
+		reg = <0x02041000 0x1000>, <0x02051000 0x1000>, <0x02082000 0x1000>;
+		qcom,gcc = <&gcc>;
+		/* the L2 runs at the fastest core rate; vdd_dig and the EBI1 bandwidth follow it */
+		vdd-dig-supply = <&pm8058_s1>;
+		clocks = <&rpmcc RPM_EBI1_CLK>;
+		clock-names = "ebi1";
+		#clock-cells = <1>;
+	};
+
+	/*
+	 * Core voltage of each Scorpion core (PM8901 S0 / S1 driven by the core's SAW). Range: 800 mV (vendor regulator
+	 * minimum, below the 837.5 mV the bootloader leaves) to 1187.5 mV (1188 MHz in the HP table for our speed bin). cpu-supply of each core.
+	 */
+	saw0_vreg: regulator@2042000 {
+		compatible = "qcom,msm8660-saw-regulator";
+		reg = <0x02042000 0x1000>;
+		qcom,cpu-index = <0>;
+		regulator-name = "vdd_sc0";
+		regulator-min-microvolt = <800000>;
+		regulator-max-microvolt = <1187500>;
+	};
+
+	saw1_vreg: regulator@2052000 {
+		compatible = "qcom,msm8660-saw-regulator";
+		reg = <0x02052000 0x1000>;
+		qcom,cpu-index = <1>;
+		regulator-name = "vdd_sc1";
+		regulator-min-microvolt = <800000>;
+		regulator-max-microvolt = <1187500>;
+	};
+
+	qfprom: efuse@700000 {
+		compatible = "qcom,qfprom";
+		reg = <0x00700000 0x1000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		tsens_calib: calib@be {
+			reg = <0xbe 0x1>;
+		};
+
+		tsens_calib_backup: calib-backup@bf {
+			reg = <0xbf 0x1>;
+		};
+	};
+};
+
+/ {
+	mdp_core_clk: clock-mdp-core {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <200000000>;
+	};
+
+	mdp_bus_clk: clock-mdp-bus {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <64000000>;
+	};
+
+	lcdc_pixel_clk: clock-lcdc-pixel {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <96000000>;
+	};
+
+	/* LCD_PWR_EN (TLMM GPIO 62), fed by PM8058 L10: first step of the panel power sequence. */
+	vcc_lcd: regulator-lcd {
+		compatible = "regulator-fixed";
+		regulator-name = "LCD_PWR";
+		gpio = <&tlmm 62 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <500>;
+		vin-supply = <&pm8058_l10>;
+		regulator-boot-on;
+	};
+
+	/*
+	 * The panel and mdp nodes are disabled in this file and enabled by qcom-apq8060-hp-touchpad-kms.dts: with the panel node
+	 * enabled but no KMS driver running, panel-simple powers the panel (LVDS_SHDN_N) and the backlight down at boot, the screen
+	 * goes dark.
+	 *
+	 * LG XGA panel: 1024x768, parallel RGB666 into an LVDS serializer whose shutdown pin is LVDS_SHDN_N (TLMM GPIO 63).
+	 * Timings of lcdc_tenderloin_xga_pt.c: 96 MHz, 60 Hz, total 2024 x 791. Power sequence of the vendor board file: L10,
+	 * LCD_PWR_EN, 500 us, LVDS_SHDN_N, 200 ms, backlight. Both syncs are active low (LCDC polarity register 0x3).
+	 */
+	panel: panel {
+		compatible = "panel-dpi";
+		width-mm = <197>;
+		height-mm = <148>;
+		power-supply = <&vcc_lcd>;
+		enable-gpios = <&tlmm 63 GPIO_ACTIVE_HIGH>;
+		data-mapping = "bgr666";
+		status = "disabled";
+
+		panel-timing {
+			clock-frequency = <96000000>;
+			hactive = <1024>;
+			vactive = <768>;
+			hfront-porch = <272>;
+			hback-porch = <400>;
+			hsync-len = <328>;
+			vfront-porch = <10>;
+			vback-porch = <6>;
+			vsync-len = <7>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+		};
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdp_lcdc_out>;
+			};
+		};
+	};
+};
+
+/*
+ * CPU frequencies: the bootloader calibrated the SCPLLs for L = 8 .. 28 (432 .. 1512 MHz). Voltages from the HP kernel table for
+ * our speed bin (acpu_freq_tbl_1188mhz, efuse 0), applied by cpufreq-dt through the SAW regulator of each core. 810 .. 1188 MHz
+ * are boost OPPs (off at boot; the settings panel switch "CPU boost" / tp cpu boost on writes
+ * /sys/devices/system/cpu/cpufreq/boost). The L2, vdd_dig and the EBI1 bandwidth follow the fastest core in clk-scorpion-acpu.c,
+ * vdd_mem is held at 1.2 V (pm8058_s0). Each core scales on its own clock and supply (no opp-shared).
+ */
+&{/cpus/cpu@0} {
+	clocks = <&acpu 0>;
+	cpu-supply = <&saw0_vreg>;
+	operating-points-v2 = <&cpu_opp_table>;
+	#cooling-cells = <2>;
+};
+
+&{/cpus/cpu@1} {
+	clocks = <&acpu 1>;
+	cpu-supply = <&saw1_vreg>;
+	operating-points-v2 = <&cpu_opp_table>;
+	#cooling-cells = <2>;
+};
+
+/ {
+	gpu_opp_table: opp-table-gpu {
+		compatible = "operating-points-v2";
+
+		/*
+		 * 266.67 MHz from PLL2 (800 MHz) / 3: the rate of the downstream kgsl (max power level), of webOS (GFX3D_NS 0x00340008) and of
+		 * Jonathan Marek's mainline TouchPad tree (flto/linux msm8660, "Tenderloin WIP", qcom,gpu-freq 266667000) where a2xx was tested.
+		 * It was 200 MHz (vendor "NOMINAL" level) before 2026-10-26.
+		 */
+		opp-266667000 {
+			opp-hz = /bits/ 64 <266667000>;
+		};
+	};
+
+	cpu_opp_table: opp-table {
+		compatible = "operating-points-v2";
+
+		opp-432000000 {
+			opp-hz = /bits/ 64 <432000000>;
+			opp-microvolt = <887500>;
+		};
+		opp-486000000 {
+			opp-hz = /bits/ 64 <486000000>;
+			opp-microvolt = <912500>;
+		};
+		opp-540000000 {
+			opp-hz = /bits/ 64 <540000000>;
+			opp-microvolt = <925000>;
+		};
+		opp-594000000 {
+			opp-hz = /bits/ 64 <594000000>;
+			opp-microvolt = <937500>;
+		};
+		opp-648000000 {
+			opp-hz = /bits/ 64 <648000000>;
+			opp-microvolt = <950000>;
+		};
+		opp-702000000 {
+			opp-hz = /bits/ 64 <702000000>;
+			opp-microvolt = <975000>;
+		};
+		opp-756000000 {
+			opp-hz = /bits/ 64 <756000000>;
+			opp-microvolt = <1000000>;
+		};
+		opp-810000000 {
+			opp-hz = /bits/ 64 <810000000>;
+			opp-microvolt = <1012500>;
+			turbo-mode;
+		};
+		opp-864000000 {
+			opp-hz = /bits/ 64 <864000000>;
+			opp-microvolt = <1037500>;
+			turbo-mode;
+		};
+		opp-918000000 {
+			opp-hz = /bits/ 64 <918000000>;
+			opp-microvolt = <1062500>;
+			turbo-mode;
+		};
+		opp-972000000 {
+			opp-hz = /bits/ 64 <972000000>;
+			opp-microvolt = <1087500>;
+			turbo-mode;
+		};
+		opp-1026000000 {
+			opp-hz = /bits/ 64 <1026000000>;
+			opp-microvolt = <1125000>;
+			turbo-mode;
+		};
+		opp-1080000000 {
+			opp-hz = /bits/ 64 <1080000000>;
+			opp-microvolt = <1137500>;
+			turbo-mode;
+		};
+		opp-1134000000 {
+			opp-hz = /bits/ 64 <1134000000>;
+			opp-microvolt = <1162500>;
+			turbo-mode;
+		};
+		opp-1188000000 {
+			opp-hz = /bits/ 64 <1188000000>;
+			opp-microvolt = <1187500>;
+			turbo-mode;
+		};
+	};
+
+	thermal-zones {
+		soc-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+			thermal-sensors = <&tsens 0>;
+
+			trips {
+				soc_alert: soc-alert {
+					temperature = <75000>;
+					hysteresis = <3000>;
+					type = "passive";
+				};
+
+				soc_hot: soc-hot {
+					temperature = <90000>;
+					hysteresis = <2000>;
+					type = "hot";
+				};
+
+				soc_crit: soc-crit {
+					temperature = <105000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&soc_alert>;
+					cooling-device = <&{/cpus/cpu@0} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+							 <&{/cpus/cpu@1} THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+		};
+	};
+};
+
+/*
+ * Battery charger: Maxim MAX8903B, controlled and monitored through GPIOs (the downstream driver is
+ * drivers/power/max8903b_charger.c, pins from gpiomux-tenderloin.h). The cable VBUS is on the DC input
+ * (DOK_N low as soon as it is plugged, even from a PC port).
+ *  - CEN (GPIO 41): charge enable, high = enabled on this board (inverted compared with the chip name).
+ *  - DOK_N (140), CHG_N (36) and FLT_N (35): open-drain status outputs of the chip, read with a pull-up (as in
+ *    the downstream gpiomux table): DC present, charging, fault.
+ *  - Input current limit: DCM (42) high = "USB mode", IUSB (133) high = 500 mA (low 100 mA), USUS (33) low = not
+ *    suspended; DCM low = DC mode, ISET1/ISET2 (34/30) 0/0 750, 0/1 900, 1/1 1400, 1/0 2000 mA. The bootloader leaves
+ *    USUS high (suspended).
+ * Driver: drivers/power/supply/tenderloin_charger.c. It detects the kind of source on D+/D- as the vendor kernel
+ * (msm72k_udc usb_multi_chg_detect), sets the limit from it, and is the VBUS extcon of the USB controller.
+ */
+&tlmm {
+	charger_status_pins: charger-status-state {
+		pins = "gpio140", "gpio36", "gpio35";
+		function = "gpio";
+		input-enable;
+		bias-pull-up;
+		drive-strength = <8>;
+	};
+};
+
+/ {
+	charger: charger {
+		compatible = "hp,tenderloin-charger";
+		pinctrl-names = "default";
+		pinctrl-0 = <&charger_status_pins>;
+		dok-gpios = <&tlmm 140 GPIO_ACTIVE_LOW>;
+		chg-gpios = <&tlmm 36 GPIO_ACTIVE_LOW>;
+		flt-gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
+		cen-gpios = <&tlmm 41 GPIO_ACTIVE_HIGH>;
+		dcm-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+		iusb-gpios = <&tlmm 133 GPIO_ACTIVE_HIGH>;
+		usus-gpios = <&tlmm 33 GPIO_ACTIVE_HIGH>;
+		iset1-gpios = <&tlmm 34 GPIO_ACTIVE_HIGH>;
+		iset2-gpios = <&tlmm 30 GPIO_ACTIVE_HIGH>;
+		hp,usb-controller = <&usb1>;
+		#extcon-cells = <0>;
+	};
+};
+
+/*
+ * I2C bus of the GSBI8 (pads GPIO 64/65 as in the downstream gpiomux: function 1, 2 mA, no pull; the group has
+ * four pads, 62 and 63 are NOT part of this bus): it carries the two "A6"
+ * microcontrollers (7-bit addresses 0x31 = a6_0, connected to the battery and its gauge, and 0x32 = a6_1) and the
+ * LM8502 lighting controller. The A6 sleeps most of the time (periodic wake) and then does not answer (always on
+ * battery): GPIO 155 (a6_0) high forces it awake; the battery driver raises it around each read.
+ */
+&tlmm {
+	gsbi8_i2c_pins: gsbi8-i2c-state {
+		pins = "gpio64", "gpio65";
+		function = "gsbi8";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+&gsbi8 {
+	qcom,mode = <GSBI_PROT_I2C>;
+	status = "okay";
+};
+
+&gsbi8_i2c {
+	pinctrl-names = "default";
+	pinctrl-0 = <&gsbi8_i2c_pins>;
+	clock-frequency = <100000>;
+	status = "okay";
+
+	/* A6 #0 (battery gauge). The A6 at 0x32 (a6_1) does not answer here. */
+	battery@31 {
+		compatible = "hp,tenderloin-a6-battery";
+		reg = <0x31>;
+		power-supplies = <&charger>;
+		wake-gpios = <&tlmm 155 GPIO_ACTIVE_HIGH>;
+	};
+
+	/*
+	 * LM8502 lighting driver (vendor board file: GSBI8 I2C, 0x33, enable GPIO 121, interrupt GPIO 128): the two white LEDs on both sides of
+	 * the Home button ("core navi", outputs D1/D2). The vibrator and the torch of the same chip are not described yet.
+	 */
+	led-controller@33 {
+		compatible = "ti,lm8502";
+		reg = <0x33>;
+		enable-gpios = <&tlmm 121 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&lm8502_pins>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		led@0 {
+			reg = <0>;
+			label = "core_navi_left";
+			color = <LED_COLOR_ID_WHITE>;
+		};
+
+		led@1 {
+			reg = <1>;
+			label = "core_navi_right";
+			color = <LED_COLOR_ID_WHITE>;
+		};
+	};
+};
+
+&tlmm {
+	/* enable (121, vendor gpiomux GPIO_OUTL_8M_PN) and interrupt (128, input with pull-up, not used yet) of the LM8502 */
+	lm8502_pins: lm8502-state {
+		enable-pins {
+			pins = "gpio121";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		interrupt-pins {
+			pins = "gpio128";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+};
+
+/*
+ * Touch panel: Cypress CY8CTMA395 (downstream board-tenderloin-ts.c, userspace driver ts_srv of CyanogenMod).
+ * The controller streams raw capacitance frames on the GSBI10 UART (RX only, GPIO 71, 4 Mbaud: GSBI10 UART clock
+ * 64 MHz) and is configured through I2C at 0x67 on the same GSBI10 (GPIO 72 SDA / 73 SCL, mode I2C + UART; the same
+ * two pins are the SWD port used to flash its firmware). XRES (GPIO 70, high = reset) and WAKE (GPIO 123) are
+ * driven from userspace (gpio character device) like the vendor sysfs files. Supplies: PM8058 L10 3.05 V (already
+ * on for the display) and the 5 V boost enabled by GPIO 102 (also the audio codec supply in the vendor kernel),
+ * switched from userspace through a regulator-output consumer (sysfs "state") like the vendor "vdd" file.
+ */
+/ {
+	vdd50_boost: regulator-vdd50-boost {
+		compatible = "regulator-fixed";
+		regulator-name = "vdd50_boost";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&tlmm 102 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vdd50_boost_pin>;
+	};
+
+	touch-power {
+		compatible = "regulator-output";
+		vout-supply = <&vdd50_boost>;
+	};
+};
+
+&soc {
+	gsbi10: gsbi@19a00000 {
+		compatible = "qcom,gsbi-v1.0.0";
+		cell-index = <10>;
+		reg = <0x19a00000 0x100>;
+		clocks = <&gcc GSBI10_H_CLK>;
+		clock-names = "iface";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		qcom,mode = <GSBI_PROT_I2C_UART>;
+		syscon-tcsr = <&tcsr>;
+
+		gsbi10_serial: serial@19a40000 {
+			compatible = "qcom,msm-uartdm-v1.3", "qcom,msm-uartdm";
+			reg = <0x19a40000 0x1000>,
+			      <0x19a00000 0x1000>;
+			interrupts = <GIC_SPI 191 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&gcc GSBI10_UART_CLK>, <&gcc GSBI10_H_CLK>;
+			clock-names = "core", "iface";
+			pinctrl-names = "default";
+			pinctrl-0 = <&ctp_uart_pins>, <&ctp_ctrl_pins>;
+		};
+
+		gsbi10_i2c: i2c@19a80000 {
+			compatible = "qcom,i2c-qup-v1.1.1";
+			reg = <0x19a80000 0x1000>;
+			interrupts = <GIC_SPI 192 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&gcc GSBI10_QUP_CLK>, <&gcc GSBI10_H_CLK>;
+			clock-names = "core", "iface";
+			pinctrl-names = "default";
+			pinctrl-0 = <&ctp_i2c_pins>;
+			clock-frequency = <100000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+	};
+};
+
+&tlmm {
+	/* downstream gpiomux: RX function 1 2 mA, in suspend pull-down */
+	ctp_uart_pins: ctp-uart-state {
+		pins = "gpio71";
+		function = "gsbi10";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	/* downstream ctp_active_cfg: function 1, 8 mA, no pull */
+	ctp_i2c_pins: ctp-i2c-state {
+		pins = "gpio72", "gpio73";
+		function = "gsbi10";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	/* XRES (70) and WAKE (123): plain GPIO outputs, 8 mA, driven from userspace */
+	ctp_ctrl_pins: ctp-ctrl-state {
+		pins = "gpio70", "gpio123";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	vdd50_boost_pin: vdd50-boost-state {
+		pins = "gpio102";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* Volume up (103), volume down (104), home (40, "core navi"): inputs with pull-up, pressed = low (downstream gpiomux GPIO_IN_8M_PU) */
+	gpio_keys_pins: gpio-keys-state {
+		pins = "gpio40", "gpio103", "gpio104";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+};
+
+/*
+ * Buttons. Downstream (board-tenderloin-keypad.c, Wi-Fi models): VOL_UP_GPIO 103, VOL_DN_GPIO 104, CORE_NAVI_GPIO 40 (KEY_HOMEPAGE), active low;
+ * the 3G models have the volume keys on PM8058 GPIOs 6/7 instead. The power key is the PM8058 pwrkey (pm8058.dtsi, pmic8xxx-pwrkey driver).
+ */
+/ {
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_keys_pins>;
+
+		key-volume-up {
+			label = "Volume Up";
+			gpios = <&tlmm 103 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEUP>;
+			debounce-interval = <15>;
+		};
+
+		key-volume-down {
+			label = "Volume Down";
+			gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEDOWN>;
+			debounce-interval = <15>;
+		};
+
+		key-home {
+			label = "Home";
+			gpios = <&tlmm 40 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_HOMEPAGE>;
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+	};
+};
+
+/*
+ * Front camera, Aptina MT9M113 (1.3 MP SoC sensor with its own ISP). Vendor board file (board-tenderloin.c): I2C on GSBI4 (GPIO 47/48) at
+ * 0x3c (0x78 8-bit), MCLK 24 MHz on GPIO 32 (cam_clk = mmcc camclk0), reset GPIO 106 (active low, held high), power-down GPIO 107 (high =
+ * powered down; the vendor driver drives it low while the camera is used), supplies PM8058 LVS0 (1.8 V) and L11 (2.85 V); data on MIPI CSI-2
+ * into CSI1 and the VFE 3.1. Drivers: kernel/src/drivers/media/i2c/mt9m113.c (sensor) and
+ * kernel/src/drivers/media/platform/qcom/msm8660_vfe.c (CSI1 + VFE 3.1 capture, /dev/video0).
+ */
+&soc {
+	/*
+	 * Camera capture: CSI1 receiver + D-PHY (0x04900000, IRQ CSI_1 = SPI 83) and VFE 3.1 (0x04500000, IRQ SPI 48), vendor
+	 * devices-msm8x60.c / board-tenderloin.c. The camera clocks that differ from the MSM8960 table are written by the driver in the
+	 * MMSS clock controller (qcom,mmcc); VFE AHB/AXI go through the clock framework.
+	 */
+	/*
+	 * Video codec: Qualcomm VIDC 1080p, driven by the qcom-vidc driver of the LuneOS port (patch 0027, vidc_legacy.c for the
+	 * MMSS power-up): firmware vidc_1080p.fw from webOS, AXI wrapper at +0x80000, VED footswitch in the MMSS clock controller
+	 * (qcom,mmcc). Vendor devices-msm8x60.c: 0x04400000, VCODEC_IRQ = SPI 49.
+	 */
+	/*
+	 * LPASS clock controller (LCC): same layout as the MSM8960 one (mainline lcc-msm8960, "qcom,lcc-msm8660" added by patch
+	 * 0024). PLL4 runs at 540.672 MHz (L/M/N left by the bootloader) and is switched on through the RPM (vendor clock-8x60.c
+	 * pll4_clk_enable: MSM_RPM_ID_PLL_4), so its vote is the RPM PLL4 clock. Readable from the apps CPU (2026-11-06).
+	 */
+	lcc: clock-controller@28000000 {
+		compatible = "qcom,lcc-msm8660";
+		reg = <0x28000000 0x1000>;
+		clocks = <&pxo_board>, <&rpmcc RPM_PLL4_CLK>;
+		clock-names = "pxo", "pll4_vote";
+		#clock-cells = <1>;
+		#reset-cells = <1>;
+	};
+
+	/*
+	 * LPASS audio interface (LPAIF), driven from the apps CPU without the Q6 DSP (lpass-msm8660.c, vendor
+	 * sound/soc/msm/lpass-dma.c: base 0x28100000, IRQ LPASS_SCSS_AUDIO_IF_OUT0 = SPI 85, rising edge). DAI 0 = codec speaker
+	 * I2S (WM8958 AIF1), clocks from the LCC codec_i2s_spkr OSR/bit clocks.
+	 */
+	lpass_cpu: audio-controller@28100000 {
+		compatible = "qcom,msm8660-lpass-cpu";
+		reg = <0x28100000 0xe000>;
+		reg-names = "lpass-lpaif";
+		interrupts = <GIC_SPI 85 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "lpass-irq-lpaif";
+		clocks = <&lcc CODEC_I2S_SPKR_OSR_CLK>, <&lcc CODEC_I2S_SPKR_BIT_CLK>,
+			 <&lcc CODEC_I2S_MIC_OSR_CLK>, <&lcc CODEC_I2S_MIC_BIT_CLK>;
+		clock-names = "spkr-osr-clk", "spkr-bit-clk", "mic-osr-clk", "mic-bit-clk";
+		/*
+		 * OSR 12.288 MHz (256 fs at 48 kHz, vendor value); without it the source keeps the boot NS value (768 kHz) and the
+		 * bit clock set_rate divides by zero in the divider rounding (2026-11-08).
+		 */
+		assigned-clocks = <&lcc CODEC_I2S_SPKR_OSR_SRC>, <&lcc CODEC_I2S_MIC_OSR_SRC>;
+		assigned-clock-rates = <12288000>, <12288000>;
+		#sound-dai-cells = <1>;
+	};
+
+	vidc: video-codec@4400000 {
+		compatible = "qcom,msm8660-vidc";
+		reg = <0x04400000 0x100000>;
+		interrupts = <GIC_SPI 49 IRQ_TYPE_LEVEL_HIGH>;
+		/*
+		 * Legacy wiring (vidc_legacy.c): the mmcc has no VCODEC clocks and no VED power domain here, so the driver writes the MMSS
+		 * registers itself (qcom,mmcc) and talks to the RPM (qcom,rpm). Clocks: the RPM SMI clock must have a rate or the RPM
+		 * leaves the SMI off; the RPM fabric clocks are kept at 384 MHz as the LuneOS interconnect provider does.
+		 */
+		clocks = <&rpmcc RPM_SMI_CLK>,
+			 <&rpmcc RPM_MM_FABRIC_CLK>, <&rpmcc RPM_MM_FABRIC_A_CLK>,
+			 <&rpmcc RPM_APPS_FABRIC_CLK>, <&rpmcc RPM_APPS_FABRIC_A_CLK>,
+			 <&rpmcc RPM_EBI1_CLK>, <&rpmcc RPM_EBI1_A_CLK>;
+		clock-names = "smi", "mmfab", "mmfab_a", "afab", "afab_a", "ebi1", "ebi1_a";
+		assigned-clocks = <&rpmcc RPM_SMI_CLK>;
+		assigned-clock-rates = <66666000>;
+		memory-region = <&vidc_fw_mem>, <&vidc_smipool_mem>;
+		qcom,mmcc = <&mmcc>;
+		qcom,rpm = <&rpm>;
+	};
+
+	vfe: camera-controller@4500000 {
+		compatible = "qcom,msm8660-vfe";
+		reg = <0x04500000 0x100000>, <0x04900000 0x400>;
+		reg-names = "vfe", "csi";
+		interrupts = <GIC_SPI 48 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "vfe";
+		clocks = <&mmcc VFE_AHB_CLK>, <&mmcc VFE_AXI_CLK>;
+		clock-names = "ahb", "axi";
+		qcom,mmcc = <&mmcc>;
+
+		port {
+			vfe_ep: endpoint {
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				data-lanes = <1>;
+				remote-endpoint = <&cam_ep>;
+			};
+		};
+	};
+
+	gsbi4: gsbi@16300000 {
+		compatible = "qcom,gsbi-v1.0.0";
+		cell-index = <4>;
+		reg = <0x16300000 0x100>;
+		clocks = <&gcc GSBI4_H_CLK>;
+		clock-names = "iface";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		qcom,mode = <GSBI_PROT_I2C>;
+
+		gsbi4_i2c: i2c@16380000 {
+			compatible = "qcom,i2c-qup-v1.1.1";
+			reg = <0x16380000 0x1000>;
+			interrupts = <GIC_SPI 153 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&gcc GSBI4_QUP_CLK>, <&gcc GSBI4_H_CLK>;
+			clock-names = "core", "iface";
+			pinctrl-names = "default";
+			pinctrl-0 = <&cam_i2c_pins>;
+			clock-frequency = <100000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			camera@3c {
+				compatible = "aptina,mt9m113";
+				reg = <0x3c>;
+				pinctrl-names = "default";
+				pinctrl-0 = <&cam_mclk_pins>, <&cam_ctrl_pins>;
+				clocks = <&mmcc CAMCLK0_CLK>;
+				/* the rate table is on the RCG: 24 MHz = PLL8 384 MHz / 4 * 1/4 (vendor msm_camio_clk_rate_set(24000000)) */
+				assigned-clocks = <&mmcc CAMCLK0_SRC>;
+				assigned-clock-rates = <24000000>;
+				reset-gpios = <&tlmm 106 GPIO_ACTIVE_LOW>;
+				powerdown-gpios = <&tlmm 107 GPIO_ACTIVE_HIGH>;
+				vdd-supply = <&pm8058_lvs0>;
+				vddio-supply = <&pm8058_lvs0>;
+				vaa-supply = <&pm8058_l11>;
+
+				port {
+					cam_ep: endpoint {
+						bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+						data-lanes = <1>;
+						remote-endpoint = <&vfe_ep>;
+					};
+				};
+			};
+		};
+	};
+};
+
+&tlmm {
+	/* vendor gpiomux: function 1 (gsbi4), 8 mA, no pull when active */
+	cam_i2c_pins: cam-i2c-state {
+		pins = "gpio47", "gpio48";
+		function = "gsbi4";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	/* GSBI7 QUP I2C (vendor msm_gsbi7_qup_i2c, 100 kHz): audio codec WM8958 */
+	codec_i2c_pins: codec-i2c-state {
+		pins = "gpio59", "gpio60";
+		function = "gsbi7";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	cam_mclk_pins: cam-mclk-state {
+		pins = "gpio32";
+		function = "cam_mclk";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	cam_ctrl_pins: cam-ctrl-state {
+		pins = "gpio106", "gpio107";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+};
+
+/*
+ * Sound card (machine driver kernel/src/sound/soc/qcom/tenderloin.c): LPAIF codec speaker I2S (MSM clock master) to the
+ * WM8958 AIF1, FLL1 locked to the bit clock; speaker amp through WM8958 GPIO1, headphones on HPOUT1 with the jack detect on
+ * TLMM GPIO 67 (high = inserted, vendor msm8x60.c hp_jack_gpios).
+ */
+/ {
+	sound {
+		compatible = "hp,tenderloin-sndcard";
+		qcom,cpu-dai = <&lpass_cpu 0>, <&lpass_cpu 1>;	/* speaker (playback), mic (capture) */
+		audio-codec = <&wm8958>;
+		hp-det-gpios = <&tlmm 67 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/*
+ * Audio codec WM8958 (rev B) on GSBI7 I2C at 0x1a (vendor board-tenderloin.c wm8958_pdata): supply PM8058 S3 1.8 V, internal
+ * LDOs enabled by TLMM GPIO 66 (LDO1) and 108 (LDO2); GPIO1 drives the external speaker amp (0x41 on, 0x01 off), GPIO6 =
+ * headset mic detect to TLMM 57; micbias 0x29 / 0x2d. No MCLK: the FLL locks to the LPAIF bit clock (machine driver, step 4).
+ * No codec IRQ is wired. The analog supplies have no separate rail in the vendor code: S3 for the 1.8 V ones and the
+ * 5 V boost for LDO1 input and the speaker outputs (not referenced, see below).
+ */
+&gsbi7 {
+	qcom,mode = <GSBI_PROT_I2C>;
+	status = "okay";
+};
+
+&gsbi7_i2c {
+	pinctrl-names = "default";
+	pinctrl-0 = <&codec_i2c_pins>;
+	clock-frequency = <100000>;
+	status = "okay";
+
+	wm8958: audio-codec@1a {
+		compatible = "wlf,wm8958";
+		reg = <0x1a>;
+		#sound-dai-cells = <0>;
+		gpio-controller;
+		#gpio-cells = <2>;
+
+		AVDD2-supply = <&pm8058_s3>;
+		CPVDD-supply = <&pm8058_s3>;
+		DBVDD1-supply = <&pm8058_s3>;
+		DBVDD2-supply = <&pm8058_s3>;
+		DBVDD3-supply = <&pm8058_s3>;
+		/*
+		 * LDO1VDD and SPKVDD1/2 are the 5 V boost, but vdd50_boost is held exclusively by the touch-power
+		 * regulator-output consumer (-EPERM): left out, the core uses dummy supplies and the boost stays on.
+		 */
+
+		wlf,ldo1ena-gpios = <&tlmm 66 GPIO_ACTIVE_HIGH>;
+		wlf,ldo2ena-gpios = <&tlmm 108 GPIO_ACTIVE_HIGH>;
+
+		wlf,gpio-cfg = <0x0001 0x8001 0x8001 0x8001 0x8001 0x2005 0xa101 0xa101 0xa101 0xa101 0xa101>;
+		wlf,micbias-cfg = <0x0029 0x002d>;
+	};
+};

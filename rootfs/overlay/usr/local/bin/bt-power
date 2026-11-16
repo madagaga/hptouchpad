@@ -1,0 +1,60 @@
+#!/bin/sh
+# Bluetooth controller (CSR BlueCore 6 on the GSBI6 UART) on or off, for the Alpine rootfs; same sequence as the initramfs helpers bt-test and
+# bt-psr (STATUS.md, "Bluetooth bring-up"), without their diagnostics:
+#   BT_POWER (GPIO 130) high, BT_RST_N (138) low then high; hciattach in BCSP at 115200 (the kernel does not do the BCSP link setup);
+#   PSR (crystal trim, TX power...: required at every power-up) and the BD address of the webOS token BToADDR loaded with bccmd into the
+#   PS RAM store, warm reset, hciattach again; hci0 up. bluetoothd (S20bluetooth) then picks the controller up.
+# Usage: bt-power on|off|status        Log: /tmp/bt-power.log
+TTY=/dev/ttyMSM1
+BASE=""
+for c in /sys/class/gpio/gpiochip*; do [ "$(cat $c/ngpio)" = 173 ] && BASE=$(cat $c/base); done
+[ -n "$BASE" ] || { echo "TLMM gpiochip not found"; exit 1; }
+out() {   # out <gpio> <level>
+  n=$((BASE + $1))
+  [ -d /sys/class/gpio/gpio$n ] || echo $n > /sys/class/gpio/export
+  echo out > /sys/class/gpio/gpio$n/direction
+  echo $2 > /sys/class/gpio/gpio$n/value
+}
+attach() {
+  hciattach -n -s 115200 $TTY bcsp 115200 noflow >> /tmp/bt-power.log 2>&1 &
+  i=0; while [ $i -lt 20 ] && [ ! -d /sys/class/bluetooth/hci0 ]; do sleep 0.5; i=$((i+1)); done
+  [ -d /sys/class/bluetooth/hci0 ]
+}
+
+case "$1" in
+  on)
+    [ -d /sys/class/bluetooth/hci0 ] && { echo "already on"; exit 0; }
+    : > /tmp/bt-power.log
+    killall hciattach 2>/dev/null
+    out 138 0; out 131 0
+    out 130 1; sleep 0.1
+    out 138 1; sleep 0.3
+    attach || { echo "no hci0 after hciattach"; exit 1; }
+    hciconfig hci0 up
+    # PSR with the BD address of the tablet (PSKEY_BDADDR words: LAP[23:16], LAP[15:0], UAP, NAP); busybox tr has no [:print:].
+    # The token name may have printable bytes glued in front of it ("S-LmBToADDR" on the second unit): match its end only.
+    ADDR=$(tr -cs ' -~' '\n' < /dev/mmcblk0p12 | grep -A1 'BToADDR$' | head -2 | tail -1)
+    case "$ADDR" in
+      ??:??:??:??:??:??)
+        IFS=:; set -- $ADDR; unset IFS
+        { printf '// PSKEY_BDADDR\n&0001 = %04x %04x %04x %04x\n' $((0x$4)) $((0x$5 * 256 + 0x$6)) $((0x$3)) $((0x$1 * 256 + 0x$2))
+          cat /etc/bluetooth/bluecore6.psr; } > /tmp/bluecore6.psr ;;
+      *) echo "BToADDR token not found, chip default address" >> /tmp/bt-power.log; cp /etc/bluetooth/bluecore6.psr /tmp/bluecore6.psr ;;
+    esac
+    bccmd -t HCI -d hci0 psload -r -s ram /tmp/bluecore6.psr >> /tmp/bt-power.log 2>&1
+    sleep 3
+    killall hciattach 2>/dev/null
+    i=0; while [ $i -lt 10 ] && [ -d /sys/class/bluetooth/hci0 ]; do sleep 0.5; i=$((i+1)); done
+    attach || { echo "no hci0 after the PSR reset"; exit 1; }
+    hciconfig hci0 up
+    echo "on: $(hciconfig hci0 | sed -n 's/.*BD Address: \([0-9A-F:]*\).*/\1/p')"
+    ;;
+  off)
+    killall hciattach 2>/dev/null
+    i=0; while [ $i -lt 10 ] && [ -d /sys/class/bluetooth/hci0 ]; do sleep 0.5; i=$((i+1)); done
+    out 138 0; out 130 0
+    echo off
+    ;;
+  status) [ -d /sys/class/bluetooth/hci0 ] && hciconfig hci0 || echo off ;;
+  *) echo "usage: bt-power on|off|status"; exit 1 ;;
+esac

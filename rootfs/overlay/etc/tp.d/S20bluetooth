@@ -1,0 +1,13 @@
+#!/bin/sh
+# Bluetooth: D-Bus system bus and bluetoothd (BlueZ; bluetoothctl and the settings panel talk to it), then the controller when the panel left
+# it on (bt=1 in /mnt/media/touchpad/tpd.conf; default off). Pairings are kept by bluetoothd in /var/lib/bluetooth (rootfs image).
+case "$1" in
+  start)
+    mkdir -p /run/dbus
+    [ -S /run/dbus/system_bus_socket ] || dbus-daemon --system
+    /usr/lib/bluetooth/bluetoothd > /tmp/bluetoothd.log 2>&1 &
+    B=$(sed -n 's/^bt=//p' /mnt/media/touchpad/tpd.conf 2>/dev/null | tail -n1)
+    [ "$B" = 1 ] && { bt-power on > /dev/null 2>&1; bluetoothctl power on > /dev/null 2>&1; } &
+    ;;
+  stop) bt-power off > /dev/null 2>&1; pkill bluetoothd 2>/dev/null ;;
+esac

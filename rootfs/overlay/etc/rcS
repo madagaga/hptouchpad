@@ -1,0 +1,21 @@
+#!/bin/sh
+# Each step is logged on the webOS media partition (synced) so that a crash leaves a trace: /mnt/media/touchpad/boot.log
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+L=/mnt/media/touchpad/boot.log
+log() { echo "$(cut -d' ' -f1 /proc/uptime) $*" >> $L; sync; }
+log rcS-start
+mount -t tmpfs tmpfs /run; log run
+mount -t tmpfs tmpfs /tmp; log tmp
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts; log devpts
+mount -t tmpfs tmpfs /dev/shm; log shm
+mount -t configfs none /sys/kernel/config 2>/dev/null; log configfs
+hostname touchpad
+ifconfig lo 127.0.0.1 up
+for s in /etc/tp.d/S*; do
+  [ -x "$s" ] || continue
+  log "start $s"
+  "$s" start >> $L 2>&1
+  log "done $s"
+done
+log rcS-end

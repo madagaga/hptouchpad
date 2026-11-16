@@ -1,0 +1,25 @@
+--- a/drivers/gpu/drm/msm/adreno/a2xx_gpu.c	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/gpu/drm/msm/adreno/a2xx_gpu.c	2026-10-17 08:26:29.670194024 +0000
+@@ -487,12 +487,21 @@
+ 	return ring->memptrs->rptr;
+ }
+ 
++/*
++ * MSM8660: gating the GPU clocks after hw_init locks up the AXI bus (the vendor kgsl halts the GPU bus port and idles the core
++ * first). Keep power, clocks and bus on for now: the runtime suspend does nothing.
++ */
++static int a2xx_pm_suspend(struct msm_gpu *gpu)
++{
++	return 0;
++}
++
+ static const struct adreno_gpu_funcs funcs = {
+ 	.base = {
+ 		.get_param = adreno_get_param,
+ 		.set_param = adreno_set_param,
+ 		.hw_init = a2xx_hw_init,
+-		.pm_suspend = msm_gpu_pm_suspend,
++		.pm_suspend = a2xx_pm_suspend,
+ 		.pm_resume = msm_gpu_pm_resume,
+ 		.recover = a2xx_recover,
+ 		.submit = a2xx_submit,

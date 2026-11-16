@@ -1,0 +1,5 @@
+# BusyBox init of the Alpine rootfs. The initramfs already moved /proc, /sys and /dev here. Root shells on the screen (tty0) and on the USB serial gadget.
+::sysinit:/etc/rcS
+tty0::respawn:/bin/busybox getty -n -l /usr/local/bin/tpshell -L tty0 0 vt100
+ttyGS0::respawn:/bin/busybox getty -n -l /usr/local/bin/tpshell -L ttyGS0 115200 vt100
+::shutdown:/bin/umount -a -r

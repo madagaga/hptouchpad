@@ -1,0 +1,11 @@
+#!/bin/sh
+# udev: libinput (used by Cog) only sees the devices that udev tagged. eudev.
+case "$1" in
+  start)
+    # touch rotation matching the screen rotation of the settings panel (libinput calibration matrix rule)
+    [ -x /usr/local/bin/tp-panel ] && /usr/local/bin/tp-panel rotation rule > /dev/null
+    /sbin/udevd --daemon 2>/dev/null
+    udevadm trigger --action=add 2>/dev/null
+    udevadm settle -t 5 2>/dev/null
+    ;;
+esac

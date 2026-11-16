@@ -1,0 +1,17 @@
+--- a/drivers/net/wireless/ath/ath6kl/wmi.c
++++ b/drivers/net/wireless/ath/ath6kl/wmi.c
+@@ -2005,7 +2005,13 @@
+ 	int num_rates;
+ 	u32 ratemask;
+ 
+-	if (!test_bit(ATH6KL_FW_CAPABILITY_STA_P2PDEV_DUPLEX,
++	/*
++	 * The old AR6003 firmware (api 3, 3.2.0.144 on the HP TouchPad) announces "sta-p2pdev-duplex" but never
++	 * answers WMI_BEGIN_SCAN: the host sends it (HTC credits come back) and no scan ever starts. The 3.4 driver
++	 * of CyanogenMod, which works with the same fw-3.bin, only knows WMI_START_SCAN.
++	 */
++	if (ar->fw_api < 4 ||
++	    !test_bit(ATH6KL_FW_CAPABILITY_STA_P2PDEV_DUPLEX,
+ 		      ar->fw_capabilities)) {
+ 		return ath6kl_wmi_startscan_cmd(wmi, if_idx,
+ 						scan_type, force_fgscan,

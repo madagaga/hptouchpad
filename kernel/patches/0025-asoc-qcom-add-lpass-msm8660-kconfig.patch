@@ -1,0 +1,46 @@
+--- a/sound/soc/qcom/Kconfig
++++ b/sound/soc/qcom/Kconfig
+@@ -29,6 +29,23 @@
+ 	select SND_SOC_LPASS_CPU
+ 	select SND_SOC_LPASS_PLATFORM
+ 
++config SND_SOC_LPASS_MSM8660
++	tristate "LPASS audio interface of the MSM8660 (no DSP)"
++	select SND_SOC_LPASS_CPU
++	select SND_SOC_LPASS_PLATFORM
++	help
++	  Say Y or M to drive the LPASS audio interface (LPAIF) of the
++	  Qualcomm MSM8660/APQ8060 (HP TouchPad) from the apps CPU, without
++	  the Q6 DSP: playback on the codec speaker I2S.
++
++config SND_SOC_TENDERLOIN
++	tristate "HP TouchPad (tenderloin) sound card"
++	depends on SND_SOC_LPASS_MSM8660 && MFD_WM8994 && I2C
++	select SND_SOC_WM8994
++	help
++	  Machine driver of the HP TouchPad: MSM8660 LPAIF codec speaker
++	  I2S to the WM8958 AIF1, speaker amplifier and headphone jack.
++
+ config SND_SOC_LPASS_APQ8016
+ 	tristate
+ 	select SND_SOC_LPASS_CPU
+--- a/sound/soc/qcom/Makefile
++++ b/sound/soc/qcom/Makefile
+@@ -5,6 +5,8 @@
+ snd-soc-lpass-hdmi-y := lpass-hdmi.o
+ snd-soc-lpass-platform-y := lpass-platform.o
+ snd-soc-lpass-ipq806x-y := lpass-ipq806x.o
++snd-soc-lpass-msm8660-y := lpass-msm8660.o
++snd-soc-tenderloin-y := tenderloin.o
+ snd-soc-lpass-apq8016-y := lpass-apq8016.o
+ snd-soc-lpass-sc7180-y := lpass-sc7180.o
+ snd-soc-lpass-sc7280-y := lpass-sc7280.o
+@@ -14,6 +16,8 @@
+ obj-$(CONFIG_SND_SOC_LPASS_HDMI) += snd-soc-lpass-hdmi.o
+ obj-$(CONFIG_SND_SOC_LPASS_PLATFORM) += snd-soc-lpass-platform.o
+ obj-$(CONFIG_SND_SOC_LPASS_IPQ806X) += snd-soc-lpass-ipq806x.o
++obj-$(CONFIG_SND_SOC_LPASS_MSM8660) += snd-soc-lpass-msm8660.o
++obj-$(CONFIG_SND_SOC_TENDERLOIN) += snd-soc-tenderloin.o
+ obj-$(CONFIG_SND_SOC_LPASS_APQ8016) += snd-soc-lpass-apq8016.o
+ obj-$(CONFIG_SND_SOC_LPASS_SC7180) += snd-soc-lpass-sc7180.o
+ obj-$(CONFIG_SND_SOC_LPASS_SC7280) += snd-soc-lpass-sc7280.o

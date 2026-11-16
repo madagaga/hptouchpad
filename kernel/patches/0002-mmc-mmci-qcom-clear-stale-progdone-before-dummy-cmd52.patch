@@ -1,0 +1,16 @@
+--- a/drivers/mmc/host/mmci.c	2026-10-15 12:50:11.323199151 +0000
++++ b/drivers/mmc/host/mmci.c	2026-10-15 12:50:11.323199151 +0000
+@@ -1899,6 +1899,13 @@
+ 	u32 status;
+ 	int ret;
+ 
++	/*
++	 * PROGDONE is not in the interrupt mask, so the normal IRQ path never clears it: a stale event
++	 * would make the wait below return immediately. Clear the old events before sending the command.
++	 */
++	writel(MCI_QCOM_PROGDONE | MCI_CMDTIMEOUT | MCI_CMDCRCFAIL | MCI_CMDRESPEND,
++	       base + MMCICLEAR);
++
+ 	writel(0, base + MMCIARGUMENT);
+ 	writel(SD_IO_RW_DIRECT | host->variant->cmdreg_cpsm_enable |
+ 	       host->variant->cmdreg_srsp | MCI_CPSM_QCOM_PROGENA,

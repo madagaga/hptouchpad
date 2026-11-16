@@ -1,0 +1,27 @@
+--- a/drivers/clk/qcom/Kconfig	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/clk/qcom/Kconfig	2026-10-16 14:46:31.181603541 +0000
+@@ -1255,6 +1255,14 @@
+ 	  Say Y if you want to support CPU frequency scaling on devices
+ 	  such as MSM8974, APQ8084, etc.
+ 
++config SCORPION_ACPU_CLK
++	tristate "MSM8660 Scorpion CPU clocks"
++	depends on ARCH_QCOM || COMPILE_TEST
++	select MFD_SYSCON
++	help
++	  Support for the per-core SCPLL clocks of the Scorpion CPUs of the MSM8660
++	  and APQ8060 (HP TouchPad), used for CPU frequency scaling.
++
+ config KPSS_XCC
+ 	tristate "KPSS Clock Controller"
+ 	help
+--- a/drivers/clk/qcom/Makefile	2025-07-24 06:56:38.000000000 +0000
++++ b/drivers/clk/qcom/Makefile	2026-10-16 14:46:31.181603541 +0000
+@@ -156,6 +156,7 @@
+ obj-$(CONFIG_SM_VIDEOCC_8450) += videocc-sm8450.o
+ obj-$(CONFIG_SM_VIDEOCC_8550) += videocc-sm8550.o
+ obj-$(CONFIG_SPMI_PMIC_CLKDIV) += clk-spmi-pmic-div.o
++obj-$(CONFIG_SCORPION_ACPU_CLK) += clk-scorpion-acpu.o
+ obj-$(CONFIG_KPSS_XCC) += kpss-xcc.o
+ obj-$(CONFIG_QCOM_HFPLL) += hfpll.o
+ obj-$(CONFIG_KRAITCC) += krait-cc.o

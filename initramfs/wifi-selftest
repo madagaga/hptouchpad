@@ -1,0 +1,18 @@
+#!/bin/sh
+# Wi-Fi self test: scan, connection to an open network, DHCP, ping of the gateway, kernel errors.
+# Usage: wifi-selftest [ssid]        (default: AKTO-GUEST). Prints one summary line starting with RESULT.
+SSID="${1:-AKTO-GUEST}"
+ifconfig wlan0 up
+sleep 2
+N=$(timeout 30 iw dev wlan0 scan 2>&1 | grep -c '^BSS')
+echo "scan: $N BSS"
+wifi-connect "$SSID" > /tmp/wifi-connect.log 2>&1
+grep -E "Connected|signal|bitrate|lease" /tmp/wifi-connect.log
+GW=$(route -n | awk '/^0.0.0.0/ {print $2; exit}')
+LOSS=100
+if [ -n "$GW" ]; then
+  LOSS=$(busybox ping -c 5 -W 2 "$GW" 2>&1 | sed -n 's/.* \([0-9]*\)% packet loss.*/\1/p')
+fi
+# kernel errors, without the normal noise (firmware name fallbacks, statistics of the mmci debug instrumentation)
+ERR=$(dmesg | grep -i -E "ath6kl.*(error|fail|timeout)|mmci.*(error|timeout|warn)" | grep -v -E "fw-[45]\.bin|Failed request firmware|timeouts=0" | wc -l)
+echo "RESULT scan=$N gateway=${GW:-none} loss=${LOSS}% kernel_errors=$ERR"

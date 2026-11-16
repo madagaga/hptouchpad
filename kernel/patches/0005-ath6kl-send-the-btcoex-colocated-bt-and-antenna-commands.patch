@@ -1,0 +1,84 @@
+--- a/drivers/net/wireless/ath/ath6kl/init.c	2026-10-15 13:43:44.430871201 +0000
++++ b/drivers/net/wireless/ath/ath6kl/init.c	2026-10-15 13:43:44.430871201 +0000
+@@ -1707,6 +1707,13 @@
+ 				   cpu_to_le32(RESET_CONTROL_COLD_RST));
+ }
+ 
++static unsigned int btcoex_dev;
++module_param(btcoex_dev, uint, 0644);
++MODULE_PARM_DESC(btcoex_dev, "Type of the Bluetooth chip sharing the antenna: 1 Qualcomm, 2 CSR, 3 Atheros 3001, 0 do not configure");
++static unsigned int btcoex_ant;
++module_param(btcoex_ant, uint, 0644);
++MODULE_PARM_DESC(btcoex_ant, "Front end antenna: 1 single, 2 dual, 0 do not configure");
++
+ static int __ath6kl_init_hw_start(struct ath6kl *ar)
+ {
+ 	long timeleft;
+@@ -1806,6 +1813,14 @@
+ 
+ 	ath6kl_dbg(ATH6KL_DBG_TRC, "%s: wmi is ready\n", __func__);
+ 
++	/* WLAN/BT coexistence, as the stock driver does (module parameters, 0 = do not send) */
++	if (btcoex_dev) {
++		ath6kl_wmi_set_btcoex_colocated_bt_dev_cmd(ar->wmi, 0, btcoex_dev);
++		if (btcoex_ant)
++			ath6kl_wmi_set_btcoex_fe_ant_cmd(ar->wmi, 0, btcoex_ant);
++		ath6kl_info("btcoex: colocated bt type %u, antenna %u\n", btcoex_dev, btcoex_ant);
++	}
++
+ 	/* communicate the wmi protocol verision to the target */
+ 	/* FIXME: return error */
+ 	if ((ath6kl_set_host_app_area(ar)) != 0)
+--- a/drivers/net/wireless/ath/ath6kl/wmi.c	2026-10-15 13:43:44.430871201 +0000
++++ b/drivers/net/wireless/ath/ath6kl/wmi.c	2026-10-15 13:43:44.430871201 +0000
+@@ -2237,6 +2237,39 @@
+ 	return ret;
+ }
+ 
++/*
++ * WLAN/BT coexistence (1 byte payload): the type of the Bluetooth chip sharing the antenna
++ * (1 Qualcomm, 2 CSR, 3 Atheros 3001, ...) and the front end antenna layout (1 single, 2 dual).
++ * The stock Atheros driver sends both right after the firmware is ready.
++ */
++int ath6kl_wmi_set_btcoex_colocated_bt_dev_cmd(struct wmi *wmi, u8 if_idx, u8 bt_dev)
++{
++	struct sk_buff *skb;
++
++	skb = ath6kl_wmi_get_new_buf(sizeof(u8));
++	if (!skb)
++		return -ENOMEM;
++
++	*(u8 *)skb->data = bt_dev;
++
++	return ath6kl_wmi_cmd_send(wmi, if_idx, skb, WMI_SET_BTCOEX_COLOCATED_BT_DEV_CMDID,
++				   NO_SYNC_WMIFLAG);
++}
++
++int ath6kl_wmi_set_btcoex_fe_ant_cmd(struct wmi *wmi, u8 if_idx, u8 fe_ant)
++{
++	struct sk_buff *skb;
++
++	skb = ath6kl_wmi_get_new_buf(sizeof(u8));
++	if (!skb)
++		return -ENOMEM;
++
++	*(u8 *)skb->data = fe_ant;
++
++	return ath6kl_wmi_cmd_send(wmi, if_idx, skb, WMI_SET_BTCOEX_FE_ANT_CMDID,
++				   NO_SYNC_WMIFLAG);
++}
++
+ int ath6kl_wmi_pmparams_cmd(struct wmi *wmi, u8 if_idx, u16 idle_period,
+ 			    u16 ps_poll_num, u16 dtim_policy,
+ 			    u16 tx_wakeup_policy, u16 num_tx_to_wakeup,
+--- a/drivers/net/wireless/ath/ath6kl/wmi.h	2026-10-15 13:43:44.430871201 +0000
++++ b/drivers/net/wireless/ath/ath6kl/wmi.h	2026-10-15 13:43:44.430871201 +0000
+@@ -2591,6 +2591,8 @@
+ int ath6kl_wmi_bmisstime_cmd(struct wmi *wmi, u8 if_idx,
+ 			     u16 bmiss_time, u16 num_beacons);
+ int ath6kl_wmi_powermode_cmd(struct wmi *wmi, u8 if_idx, u8 pwr_mode);
++int ath6kl_wmi_set_btcoex_colocated_bt_dev_cmd(struct wmi *wmi, u8 if_idx, u8 bt_dev);
++int ath6kl_wmi_set_btcoex_fe_ant_cmd(struct wmi *wmi, u8 if_idx, u8 fe_ant);
+ int ath6kl_wmi_pmparams_cmd(struct wmi *wmi, u8 if_idx, u16 idle_period,
+ 			    u16 ps_poll_num, u16 dtim_policy,
+ 			    u16 tx_wakup_policy, u16 num_tx_to_wakeup,

@@ -1,0 +1,29 @@
+--- a/drivers/clk/qcom/gcc-msm8660.c
++++ b/drivers/clk/qcom/gcc-msm8660.c
+@@ -9,6 +9,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/of_platform.h>
+ #include <linux/clk-provider.h>
+ #include <linux/regmap.h>
+ #include <linux/reset-controller.h>
+@@ -2766,7 +2767,17 @@
+ 
+ static int gcc_msm8660_probe(struct platform_device *pdev)
+ {
+-	return qcom_cc_probe(pdev, &gcc_msm8660_desc);
++	int ret;
++
++	ret = qcom_cc_probe(pdev, &gcc_msm8660_desc);
++	if (ret)
++		return ret;
++
++	/* The temperature sensor (TSENS) is a child node sharing the registers of this block */
++	if (of_get_available_child_count(pdev->dev.of_node) != 0)
++		return devm_of_platform_populate(&pdev->dev);
++
++	return 0;
+ }
+ 
+ static struct platform_driver gcc_msm8660_driver = {

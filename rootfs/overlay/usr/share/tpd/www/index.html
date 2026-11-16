@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- device width: 1024x768 in landscape, 768x1024 when the screen is rotated -->
+<meta name="viewport" content="width=device-width, user-scalable=no">
+<title>TouchPad settings</title>
+<!-- Settings panel template (docs/SETTINGS-PANEL.md). Served by httpd on 127.0.0.1:8080 and shown by Cog (triple Home).
+     Every control calls tp([...]): a POST of the tp argument list to /cgi-bin/tp. Without a backend (desktop review) the mock answers. -->
+<style>
+  :root {
+    --bg: #101317; --panel: #181c22; --row: #1f242b; --line: #2b313a; --text: #e8ebef; --dim: #8b95a3;
+    --accent: #3d8bfd; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 18px/1.35 "DejaVu Sans", sans-serif; user-select: none; overflow: hidden; }
+  .app { display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
+
+  nav { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  nav h1 { font-size: 20px; margin: 0; padding: 22px 20px 14px; }
+  nav button { all: unset; display: flex; align-items: center; gap: 14px; height: 58px; padding: 0 20px; cursor: pointer; }
+  nav button .ico { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; font-size: 18px; background: var(--row); }
+  svg.i { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  nav button.on { background: var(--row); box-shadow: inset 4px 0 var(--accent); }
+  nav button.off { color: var(--dim); }
+  nav .grow { flex: 1; }
+  nav .close { margin: 14px; height: 56px; justify-content: center; border-radius: 10px; background: var(--accent); font-weight: bold; }
+
+  main { overflow-y: auto; padding: 22px 30px 30px; }
+  main h2 { font-size: 26px; margin: 0 0 18px; }
+  section { display: none; } section.on { display: block; }
+  .group { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 22px; overflow: hidden; }
+  .group > .title { color: var(--dim); font-size: 14px; text-transform: uppercase; letter-spacing: .05em; padding: 12px 18px 4px; }
+  .row { display: flex; align-items: center; gap: 16px; min-height: 60px; padding: 8px 18px; border-top: 1px solid var(--line); }
+  .group > .title + .row { border-top: none; }
+  .row .label { flex: 1; } .row .sub { display: block; color: var(--dim); font-size: 14px; }
+  .row.tap { cursor: pointer; } .row.tap:active { background: var(--row); }
+
+  .switch { position: relative; width: 62px; height: 34px; border-radius: 17px; background: var(--line); flex: none; transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 28px; height: 28px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .switch.on { background: var(--ok); } .switch.on::after { left: 31px; }
+
+  input[type=range] { -webkit-appearance: none; flex: 1; height: 34px; background: transparent; }
+  input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 4px; background: var(--line); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 34px; height: 34px; margin-top: -13px; border-radius: 50%; background: #fff; }
+  input[type=text], input[type=password], input[type=date], input[type=time], select {
+    font: inherit; color: var(--text); background: var(--row); border: 1px solid var(--line); border-radius: 8px; height: 46px; padding: 0 12px; }
+  input[type=text].wide { flex: 1; }
+  #browser summary { cursor: pointer; padding-bottom: 12px; }
+  #cog-options input[type=text] { width: 10em; max-width: 45%; min-width: 0; }
+  #cog-doc { width: 26px; height: 26px; }
+  .btn { font: inherit; height: 46px; padding: 0 20px; border-radius: 8px; border: none; background: var(--row); color: var(--text); }
+  .btn.primary { background: var(--accent); } .btn.danger { color: var(--bad); }
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chips .btn.on { background: var(--accent); }
+  .val { color: var(--dim); min-width: 64px; text-align: right; }
+  .bars { font-family: monospace; color: var(--ok); }
+  .badge { font-size: 13px; padding: 3px 8px; border-radius: 6px; background: var(--row); color: var(--dim); }
+  .badge:empty { display: none; }
+  .badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); }
+  .na { opacity: .45; pointer-events: none; }
+  .note { color: var(--dim); font-size: 15px; padding: 12px 18px; }
+  .meter { flex: 1; height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: #fff; transition: width .3s; }
+  .row.cam { justify-content: center; min-height: 120px; }
+  #cam-img { display: none; max-width: 100%; max-height: 420px; border-radius: 8px; }
+  #cam-img.on { display: block; }
+
+  .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; }
+  .sheet.on { display: flex; }
+  .sheet .box { width: 520px; max-height: 88vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 22px; }
+  #sheet-body { overflow-y: auto; }
+  .tzlist { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .tzlist .btn { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tzlist .btn.on { background: var(--accent); }
+  .sheet h3 { margin: 0 0 16px; } .sheet .actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 18px; }
+  .sheet input { width: 100%; }
+
+  #log { position: fixed; right: 12px; bottom: 10px; max-width: 640px; font: 13px monospace; color: var(--dim);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; opacity: 0; transition: opacity .2s; }
+  #log.on { opacity: .95; }
+  #log.err { color: var(--bad); border-color: var(--bad); }
+</style>
+</head>
+<body>
+<!-- icons as inline SVG: the tablet has only the DejaVu fonts, which have no emoji -->
+<svg width="0" height="0" style="position:absolute"><symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1.2" fill="currentColor"/></symbol><symbol id="i-bt" viewBox="0 0 24 24"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></symbol><symbol id="i-battery" viewBox="0 0 24 24"><rect x="2" y="7" width="17" height="10" rx="2"/><path d="M22 11v2M6 10v4M9.5 10v4"/></symbol><symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol><symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol><symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></symbol><symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></symbol><symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8h4l2-3h6l2 3h4v11H3z"/><circle cx="12" cy="13" r="3.5"/></symbol><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></symbol></svg>
+<div class="app">
+  <nav id="nav">
+    <h1>Settings</h1>
+    <button data-s="wifi"><span class="ico"><svg class="i"><use href="#i-wifi"/></svg></span>Wi-Fi</button>
+    <button data-s="bt"><span class="ico"><svg class="i"><use href="#i-bt"/></svg></span>Bluetooth</button>
+    <button data-s="display"><span class="ico"><svg class="i"><use href="#i-sun"/></svg></span>Display</button>
+    <button data-s="battery"><span class="ico"><svg class="i"><use href="#i-battery"/></svg></span>Battery</button>
+    <button data-s="browser"><span class="ico"><svg class="i"><use href="#i-globe"/></svg></span>Browser</button>
+    <button data-s="time"><span class="ico"><svg class="i"><use href="#i-clock"/></svg></span>Date and time</button>
+    <button data-s="sound"><span class="ico"><svg class="i"><use href="#i-sound"/></svg></span>Sound</button>
+    <button data-s="camera"><span class="ico"><svg class="i"><use href="#i-camera"/></svg></span>Camera</button>
+    <button data-s="about"><span class="ico"><svg class="i"><use href="#i-info"/></svg></span>About</button>
+    <div class="grow"></div>
+    <button class="close" onclick="tp(['panel','close'])">Close</button>
+  </nav>
+
+  <main>
+    <!-- Wi-Fi -->
+    <section id="wifi">
+      <h2>Wi-Fi</h2>
+      <div class="group">
+        <div class="row"><span class="label">Wi-Fi</span><div class="switch on" data-cmd="wifi power"></div></div>
+        <div class="row"><span class="label" id="wifi-cur">…<span class="sub">…</span></span><span class="badge" id="wifi-badge"></span></div>
+      </div>
+      <div class="group">
+        <div class="title">Saved networks</div>
+        <div id="wifi-saved"></div>
+      </div>
+      <div class="group">
+        <div class="title">Available networks</div>
+        <div id="wifi-scan"></div>
+        <div class="row"><span class="label"></span><button class="btn" onclick="wifiScan()">Scan again</button>
+          <button class="btn" onclick="askNet('')">Hidden network…</button></div>
+      </div>
+    </section>
+
+    <!-- Bluetooth -->
+    <section id="bt">
+      <h2>Bluetooth</h2>
+      <div class="group">
+        <div class="row"><span class="label">Bluetooth<span class="sub">Classic only (2.1 + EDR), no Bluetooth LE on this chip</span></span>
+          <div class="switch" data-cmd="bt power"></div></div>
+        <div class="row"><span class="label">Visible to other devices<span class="sub">For 2 minutes</span></span>
+          <div class="switch" data-cmd="bt visible"></div></div>
+      </div>
+      <div class="group"><div class="title">Paired devices</div><div id="bt-paired"></div></div>
+      <div class="group"><div class="title">Nearby devices</div><div id="bt-scan"></div>
+        <div class="row"><span class="label"></span><button class="btn" onclick="btScan()">Search</button></div></div>
+    </section>
+
+    <!-- Display -->
+    <section id="display">
+      <h2>Display</h2>
+      <div class="group">
+        <div class="title">Brightness</div>
+        <div class="row"><svg class="i"><use href="#i-sun"/></svg><input type="range" id="bright" min="5" max="100" step="5"><span class="val" id="bright-v"></span></div>
+      </div>
+      <div class="group">
+        <div class="title">Turn the screen off after</div>
+        <div class="row"><div class="chips" id="screen-off"></div></div>
+        <div class="note">Press Home or Power to wake the screen: touching it does nothing while it is off.</div>
+      </div>
+      <div class="group">
+        <div class="title">Rotation</div>
+        <div class="row"><div class="chips" id="rotation"></div></div>
+        <div class="note">The browser restarts to apply it (a few seconds); this panel opens again afterwards.</div>
+      </div>
+    </section>
+
+    <!-- Battery -->
+    <section id="battery">
+      <h2>Battery</h2>
+      <div class="group">
+        <div class="row"><span class="label" id="batt-cap" style="font-size:30px">--<span class="sub" id="batt-state"></span></span>
+          <span class="badge" id="batt-badge"></span></div>
+      </div>
+      <div class="group">
+        <div class="title">Charge limit</div>
+        <div class="row"><span class="label">Limit charging<span class="sub">Keeps the battery between the two levels while the charger stays plugged in</span></span>
+          <div class="switch" id="batt-limit"></div></div>
+        <div class="row"><span class="label">Start charging below</span><input type="range" id="batt-min" min="5" max="90" step="5"><span class="val" id="batt-min-v"></span></div>
+        <div class="row"><span class="label">Stop charging at</span><input type="range" id="batt-max" min="20" max="100" step="5"><span class="val" id="batt-max-v"></span></div>
+        <div class="note">When charging stops, the charger still powers the tablet: the battery is only spared.</div>
+      </div>
+      <div class="group">
+        <div class="title">Performance</div>
+        <div class="row"><span class="label">CPU boost<span class="sub" id="cpu-state">Up to 1188 MHz instead of 756 MHz: faster, uses more battery</span></span>
+          <div class="switch" id="cpu-boost"></div></div>
+      </div>
+    </section>
+
+    <!-- Browser -->
+    <section id="browser">
+      <h2>Browser</h2>
+      <div class="group">
+        <div class="title">Page shown at start-up</div>
+        <div class="row"><input type="text" class="wide" id="url" spellcheck="false" autocapitalize="off">
+          <button class="btn primary" onclick="tp(['url','set',$('#url').value])">Save</button></div>
+        <div class="row"><span class="label">Open it now</span><button class="btn" onclick="tp(['url','open'])">Open</button></div>
+        <div class="row"><span class="label">Reload the page</span><button class="btn" onclick="tp(['browser','reload'])">Reload</button></div>
+        <div class="row"><span class="label">Clear the cache<span class="sub" id="cache-size">Cached files of the pages; logins and site settings are kept</span></span>
+          <button class="btn" onclick="confirmDo('Clear the browser cache? The browser restarts (a few seconds), then this panel opens again.', ['browser','clear-cache'])">Clear</button></div>
+      </div>
+      <details class="group">
+        <summary class="title">Advanced</summary>
+        <form id="cog-options" autocomplete="off">
+          <div class="row"><label class="label" for="cog-language">Preferred website language<span class="sub">Language code, e.g. fr or fr-FR</span></label>
+            <input type="text" id="cog-language" placeholder="System default" maxlength="7" spellcheck="false" autocapitalize="off"></div>
+          <div class="row"><label class="label" for="cog-scale">Page scale</label>
+            <input type="text" inputmode="decimal" id="cog-scale" placeholder="1.0" maxlength="16"></div>
+          <div class="row"><label class="label" for="cog-device-scale">Device scale</label>
+            <input type="text" inputmode="decimal" id="cog-device-scale" placeholder="1.0" maxlength="16"></div>
+          <div class="row"><label class="label" for="cog-bg">Background color<span class="sub">CSS color name or #RRGGBBAA</span></label>
+            <input type="text" id="cog-bg" placeholder="white" maxlength="32" spellcheck="false" autocapitalize="off"></div>
+          <div class="row"><label class="label" for="cog-failure">Web process failure<span class="sub">error-page, exit, exit-ok or restart</span></label>
+            <input type="text" id="cog-failure" placeholder="error-page" maxlength="10" spellcheck="false" autocapitalize="off"></div>
+          <div class="row"><label class="label" for="cog-permissions">Website permissions<span class="sub">none or all (automatically grants requests)</span></label>
+            <input type="text" id="cog-permissions" placeholder="none" maxlength="4" spellcheck="false" autocapitalize="off"></div>
+          <div class="row"><label class="label" for="cog-doc">Document viewer mode<span class="sub">Off by default. Reduces network caching.</span></label>
+            <input type="checkbox" id="cog-doc"></div>
+          <div class="row"><span class="label">Empty fields use Cog defaults. Applying restarts the browser.</span>
+            <button type="submit" class="btn primary" id="cog-apply" disabled>Apply</button></div>
+        </form>
+      </details>
+    </section>
+
+    <!-- Date and time -->
+    <section id="time">
+      <h2>Date and time</h2>
+      <div class="group">
+        <div class="row"><span class="label" id="clock" style="font-size:30px">--:--<span class="sub">…</span></span></div>
+      </div>
+      <div class="group">
+        <div class="title">Network time (NTP)</div>
+        <div class="row"><span class="label">Set automatically<span class="sub" id="ntp-state">…</span></span>
+          <div class="switch" id="ntp" data-cmd="ntp"></div></div>
+        <div class="row"><span class="label">Server</span><input type="text" id="ntp-server" spellcheck="false">
+          <button class="btn" onclick="tp(['ntp','server',$('#ntp-server').value])">Save</button></div>
+      </div>
+      <div class="group" id="manual">
+        <div class="title">Manual</div>
+        <div class="row"><input type="date" id="d"><input type="time" id="t">
+          <button class="btn primary" onclick="tp(['time','set',$('#d').value+' '+$('#t').value])">Set</button></div>
+      </div>
+      <div class="group">
+        <div class="title">Time zone</div>
+        <!-- not a <select>: Cog has no popup for its options, so the list is drawn by the page (tzPick) -->
+        <div class="row tap" onclick="tzPick()"><span class="label" id="tz">UTC</span><span class="val">Change</span></div>
+      </div>
+    </section>
+
+    <!-- Sound -->
+    <section id="sound">
+      <h2>Sound</h2>
+      <div class="group">
+        <div class="title">Volume</div>
+        <div class="row"><svg class="i"><use href="#i-sound"/></svg><input type="range" id="vol" min="0" max="100" step="5"><span class="val" id="vol-v"></span></div>
+        <div class="row"><span class="label">Mute</span><div class="switch" id="mute"></div></div>
+        <div class="row"><span class="label">Test sound<span class="sub">Plays a short chime on the speaker, or the headphones when plugged in</span></span>
+          <button class="btn primary" onclick="tp(['sound','test'])">Play</button></div>
+      </div>
+      <div class="group">
+        <div class="title">Microphone</div>
+        <div class="row"><svg class="i"><use href="#i-mic"/></svg><input type="range" id="mic" min="0" max="100" step="1"><span class="val" id="mic-v"></span></div>
+        <div class="row"><span class="label">Mute</span><div class="switch" id="mic-mute"></div></div>
+        <div class="row"><span class="label">Test the microphone<span class="sub" id="mic-state">Records 3 seconds, then plays them back</span></span>
+          <button class="btn primary" id="mic-test">Record</button></div>
+        <div class="row"><span class="label">Recorded level</span><div class="meter"><div id="mic-bar"></div></div><span class="val" id="mic-db"></span></div>
+      </div>
+    </section>
+
+    <!-- Camera -->
+    <section id="camera">
+      <h2>Camera</h2>
+      <div class="group">
+        <div class="row"><span class="label">Front camera<span class="sub" id="cam-state">Aptina MT9M113, 640x480</span></span>
+          <button class="btn primary" id="cam-snap">Take a picture</button></div>
+        <div class="row"><span class="label">Live preview<span class="sub">A new picture about every second</span></span><div class="switch" id="cam-live"></div></div>
+        <div class="row"><span class="label">Picture orientation<span class="sub">Turns the pictures by a quarter turn</span></span>
+          <button class="btn" onclick="tp(['camera','rotate']).then(r => r && camSnap())">Rotate</button></div>
+        <div class="row cam"><img id="cam-img" alt=""><span class="note" id="cam-empty">No picture yet</span></div>
+      </div>
+      <div class="note">The camera serves one program at a time: a picture waits, or fails, while another program is streaming from it.</div>
+    </section>
+
+    <!-- About -->
+    <section id="about">
+      <h2>About</h2>
+      <div class="group" id="info"></div>
+      <div class="group">
+        <div class="row"><span class="label">Restart</span><button class="btn" onclick="confirmDo('Restart the tablet?',['reboot'])">Restart</button></div>
+        <div class="row"><span class="label">Power off</span><button class="btn" onclick="confirmDo('Power off the tablet?',['poweroff'])">Power off</button></div>
+        <div class="row"><span class="label">Restart into recovery</span>
+          <button class="btn danger" onclick="confirmDo('Restart into recovery (webOS bootloader)?',['recovery'])">Recovery</button></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="sheet" id="sheet"><div class="box">
+  <h3 id="sheet-t"></h3>
+  <div id="sheet-body"></div>
+  <div class="actions"><button class="btn" onclick="sheet(false)">Cancel</button><button class="btn primary" id="sheet-ok">OK</button></div>
+</div></div>
+<div id="log"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// --- backend: POST the tp argument list to the CGI mode of tp ---
+// Mock data only when the page is not served over HTTP (opened from a file for a desktop review, or a data: preview). On the tablet
+// (http://127.0.0.1:8080) a failed call (httpd restarting, bad answer) is shown as an error and the next call tries the backend again.
+const mockMode = !/^https?:$/.test(location.protocol);
+async function tp(args) {
+  const cmd = 'tp ' + args.map(a => /^[\w.:\/-]+$/.test(a) ? a : JSON.stringify(a)).join(' ');
+  let res;
+  if (mockMode) {
+    res = mock(args);
+  } else {
+    try {
+      const r = await fetch('/cgi-bin/tp', { method: 'POST', headers: { 'X-TP': '1', 'Content-Type': 'application/json' },
+                                             body: JSON.stringify(args) });
+      res = await r.json();
+    } catch (e) {
+      res = { ok: false, error: 'no answer from the tablet (' + e.message + ')' };
+    }
+  }
+  if (res && res.ok === false) { showLog(cmd + ': ' + res.error, true); return null; }
+  showLog(cmd);
+  return res;
+}
+let logTimer;
+function showLog(t, err) { const l = $('#log'); l.textContent = (mockMode ? '[mock] ' : '') + t; l.classList.add('on');
+  l.classList.toggle('err', !!err);
+  clearTimeout(logTimer); logTimer = setTimeout(() => l.classList.remove('on'), err ? 6000 : 2500); }
+
+// --- mock data for desktop review (same shapes as `tp -j`) ---
+const M = {
+  wifi: { power: true, connected: true, ssid: '2sWifi_5G', freq: 5180, signal: -61, ip: '192.168.10.116' },
+  saved: [{ id: 0, ssid: '2sWifi_5G', current: true }, { id: 1, ssid: '2sWifi' }],
+  scan: [{ ssid: '2sWifi_5G', signal: -61, sec: 'WPA2' }, { ssid: '2sWifi', signal: -66, sec: 'WPA2' },
+         { ssid: 'AKTO-GUEST', signal: -74, sec: 'open' }, { ssid: 'Livebox-81A2', signal: -83, sec: 'WPA2' }],
+  bt: { power: false, visible: false, paired: [{ addr: '00:1A:7D:DA:71:13', name: 'BT keyboard', connected: false }],
+        scan: [{ addr: '5C:F3:70:12:34:56', name: 'Speaker' }] },
+  backlight: 60, screen_off: 300, rotation: 0,
+  battery: { capacity: 76, status: 'Charging', source: 'wall', current_ma: 850, limit: false, min: 20, max: 80, held: false }, url: 'https://example.org/dashboard',
+  ntp: { on: true, server: 'pool.ntp.org', synced: true }, tz: 'Europe/Paris',
+  cpu: { boost: false, max_mhz: 756, cur_mhz: [432, 432] },
+  sound: { volume: 70, mute: false, mic_volume: 87, mic_mute: false },
+  camera: { present: true, width: 640, height: 480, ms: 420 },
+  info: { kernel: 'Linux 6.12.40', battery: '76 % (charging)', cpu: '432-756 MHz', temp: '41 °C', ip: '192.168.10.116', storage: 'rootfs 1.2 GB / 2.0 GB' },
+};
+function mock(a) {
+  const [c, s, v] = a;
+  if (c === 'backlight' && s === 'set') M.backlight = +v;
+  if (c === 'screen' && s === 'set') M.screen_off = +v;
+  if (c === 'rotation' && s === 'set') M.rotation = +v;
+  if (c === 'battery' && s === 'limit') M.battery.limit = v === 'on';
+  if (c === 'battery' && s === 'range') { M.battery.min = +v; M.battery.max = +a[3]; }
+  if (c === 'cpu' && s === 'boost') M.cpu.boost = v === 'on';
+  if (c === 'sound' && s === 'volume') M.sound.volume = +v;
+  if (c === 'sound' && s === 'mute') M.sound.mute = v === 'on';
+  if (c === 'sound' && s === 'mic-volume') M.sound.mic_volume = +v;
+  if (c === 'sound' && s === 'mic-mute') M.sound.mic_mute = v === 'on';
+  if (c === 'sound' && s === 'mic-test') return { ok: true, seconds: 3 };
+  if (c === 'sound' && s === 'mic-level') return { ok: true, state: 'done', peak_db: -14, rms_db: -31 };
+  if (c === 'url' && s === 'set') M.url = v;
+  if (c === 'browser' && s === 'set-options') {
+    M.cogOptions = Object.fromEntries(cogFields.map(([key], i) => [key, a[i + 2]]));
+  }
+  if (c === 'ntp' && (s === 'on' || s === 'off')) M.ntp.on = s === 'on';
+  if (c === 'ntp' && s === 'server') M.ntp.server = v;
+  if (c === 'tz' && s !== 'list') M.tz = s;
+  if (c === 'bt' && s === 'power') M.bt.power = v === 'on';
+  if (c === 'wifi' && s === 'remove') M.saved = M.saved.filter(n => n.id != v);
+  if (c === 'wifi' && s === 'add') M.saved.push({ id: M.saved.length + 5, ssid: v });
+  const r = ({ wifi: { status: M.wifi, list: M.saved, scan: M.scan }[s], bt: { status: M.bt, scan: M.bt.scan }[s],
+    backlight: { level: M.backlight }, screen: { seconds: M.screen_off }, rotation: { rotation: M.rotation }, battery: M.battery, url: { url: M.url },
+    ntp: M.ntp, tz: { tz: M.tz, zones: ['UTC', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'America/New_York', 'Asia/Tokyo'] },
+    browser: s === 'options' ? M.cogOptions : { kb: 812 }, info: M.info, cpu: M.cpu, sound: M.sound, camera: M.camera }[c] || {});
+  return Array.isArray(r) ? r : { ok: true, ...r };
+}
+
+// --- navigation ---
+function show(id) {
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === id));
+  document.querySelectorAll('nav button[data-s]').forEach(b => b.classList.toggle('on', b.dataset.s === id));
+  try { localStorage.setItem('tpd.section', id); } catch (e) {}
+  ({ wifi: loadWifi, bt: loadBt, display: loadDisplay, battery: loadBattery, browser: loadBrowser, time: loadTime, sound: loadSound, camera: loadCamera, about: loadInfo }[id] || (() => {}))();
+}
+document.querySelectorAll('nav button[data-s]').forEach(b => b.onclick = () => show(b.dataset.s));
+
+// generic switches: data-cmd="wifi power" -> tp wifi power on|off
+document.querySelectorAll('.switch[data-cmd]').forEach(sw => sw.onclick = () => {
+  sw.classList.toggle('on');
+  // reload the section afterwards: it shows the real state (Bluetooth takes ~12 s to power up, a refused change flips back)
+  const reload = { ntp: loadTime, bt: loadBt, wifi: loadWifi }[sw.dataset.cmd.split(' ')[0]];
+  tp([...sw.dataset.cmd.split(' '), sw.classList.contains('on') ? 'on' : 'off']).then(() => reload && reload());
+});
+
+// --- sheet (dialogs) ---
+function sheet(on, title, body, ok) {
+  $('#sheet').classList.toggle('on', on);
+  if (!on) return;
+  $('#sheet-t').textContent = title; $('#sheet-body').innerHTML = body; $('#sheet-body').scrollTop = 0;
+  $('#sheet-ok').style.display = ok ? '' : 'none';
+  $('#sheet-ok').onclick = () => { ok(); sheet(false); };
+  const f = $('#sheet-body input'); f && f.focus();
+}
+
+// time zone picker: areas first (Europe, America...), then the cities of the area; a choice applies at once
+let tzZones = [], tzCur = 'UTC';
+function tzPick(area) {
+  const items = area ? tzZones.filter(t => t.startsWith(area + '/')).map(t => [t, t.slice(area.length + 1).replace(/_/g, ' ')])
+                     : [...new Set(tzZones.map(t => t.split('/')[0]))].map(a => [a, a]);
+  sheet(true, area || 'Time zone', (area ? '<button class="btn" id="tz-back">‹ Areas</button>' : '') + '<div class="tzlist">' +
+    items.map(([v, l]) => `<button class="btn ${v === tzCur || tzCur.startsWith(v + '/') ? 'on' : ''}" data-v="${esc(v)}">${esc(l)}</button>`).join('') +
+    '</div>');
+  if (area) $('#tz-back').onclick = () => tzPick();
+  $('#sheet-body').querySelectorAll('.tzlist .btn').forEach(b => b.onclick = () => {
+    const v = b.dataset.v;
+    if (!area && tzZones.some(t => t.startsWith(v + '/'))) return tzPick(v);
+    tp(['tz', v]).then(r => { if (r) { sheet(false); loadTime(); } });
+  });
+}
+function confirmDo(text, args) { sheet(true, text, '', () => tp(args)); }
+function askNet(ssid) {
+  sheet(true, ssid ? 'Connect to ' + ssid : 'Hidden network',
+    (ssid ? '' : '<input type="text" id="n-ssid" placeholder="Network name" style="margin-bottom:12px">') +
+    '<input type="password" id="n-key" placeholder="Password (empty for an open network)">',
+    () => tp(['wifi', 'add', ssid || $('#n-ssid').value, $('#n-key').value]).then(wifiLater));
+}
+
+// --- sections ---
+const bars = dbm => '▂▄▆█'.slice(0, dbm > -60 ? 4 : dbm > -70 ? 3 : dbm > -80 ? 2 : 1);
+// association and DHCP take a few seconds: refresh now and again a little later
+function wifiLater() { loadWifi(); setTimeout(loadWifi, 8000); }
+async function loadWifi() {
+  const st = await tp(['wifi', 'status']);
+  if (st) {
+    document.querySelector('[data-cmd="wifi power"]').classList.toggle('on', st.power);
+    $('#wifi-cur').innerHTML = st.connected ? esc(st.ssid) + `<span class="sub">${st.freq} MHz · ${st.signal} dBm · ${esc(st.ip)}</span>`
+                                            : 'Not connected<span class="sub"></span>';
+    $('#wifi-badge').textContent = st.connected ? 'Connected' : 'Off';
+    $('#wifi-badge').className = 'badge' + (st.connected ? ' ok' : '');
+  }
+  const saved = await tp(['wifi', 'list']) || [];
+  $('#wifi-saved').innerHTML = saved.map(n => `<div class="row">
+    <span class="label">${esc(n.ssid)}${n.current ? '<span class="sub">Current network</span>' : ''}</span>
+    ${n.current ? '' : `<button class="btn" onclick="tp(['wifi','select','${n.id}']).then(wifiLater)">Connect</button>`}
+    <button class="btn danger" onclick="tp(['wifi','remove','${n.id}']).then(loadWifi)">Forget</button></div>`).join('')
+    || '<div class="note">None</div>';
+  wifiScan();
+}
+async function wifiScan() {
+  const list = (await tp(['wifi', 'scan']) || []).sort((a, b) => b.signal - a.signal);
+  $('#wifi-scan').innerHTML = list.map((n, i) => `<div class="row tap" data-i="${i}">
+    <span class="label">${esc(n.ssid)}<span class="sub">${n.sec === 'open' ? 'Open' : esc(n.sec)}</span></span>
+    <span class="bars">${bars(n.signal)}</span></div>`).join('');
+  $('#wifi-scan').querySelectorAll('.row').forEach(r => r.onclick = () => askNet(list[r.dataset.i].ssid));
+}
+async function loadBt() {
+  const st = await tp(['bt', 'status']);
+  if (!st) return;
+  document.querySelector('[data-cmd="bt power"]').classList.toggle('on', st.power);
+  document.querySelector('[data-cmd="bt visible"]').classList.toggle('on', st.visible);
+  $('#bt-paired').innerHTML = st.paired.map(d => `<div class="row"><span class="label">${esc(d.name)}<span class="sub">${esc(d.addr)}${d.connected ? ' · connected' : ''}</span></span>
+    ${d.connected ? '' : `<button class="btn" onclick="tp(['bt','connect','${esc(d.addr)}']).then(loadBt)">Connect</button>`}
+    <button class="btn danger" onclick="tp(['bt','remove','${esc(d.addr)}']).then(loadBt)">Forget</button></div>`).join('')
+    || '<div class="note">None</div>';
+}
+async function btScan() {
+  $('#bt-scan').innerHTML = '<div class="note">Searching (10 s)…</div>';
+  const list = await tp(['bt', 'scan']) || [];
+  $('#bt-scan').innerHTML = list.length ? list.map(d => `<div class="row"><span class="label">${esc(d.name)}<span class="sub">${esc(d.addr)}</span></span>
+    <button class="btn primary" onclick="tp(['bt','pair','${esc(d.addr)}']).then(loadBt)">Pair</button></div>`).join('')
+    : '<div class="note">No device found</div>';
+}
+const DELAYS = [[30, '30 s'], [60, '1 min'], [300, '5 min'], [900, '15 min'], [1800, '30 min'], [0, 'Never']];
+async function loadDisplay() {
+  const b = await tp(['backlight', 'get']);
+  if (b) { $('#bright').value = b.level; $('#bright-v').textContent = b.level + ' %'; }
+  const s = await tp(['screen', 'get']);
+  if (!s) return;
+  $('#screen-off').innerHTML = DELAYS.map(([v, l]) =>
+    `<button class="btn ${v === s.seconds ? 'on' : ''}" onclick="tp(['screen','set','${v}']).then(loadDisplay)">${l}</button>`).join('');
+  const r = await tp(['rotation', 'get']);
+  if (!r) return;
+  $('#rotation').innerHTML = ROTATIONS.map(([v, l]) =>
+    `<button class="btn ${v === r.rotation ? 'on' : ''}" onclick="${v === r.rotation ? '' : `setRotation(${v})`}">${l}</button>`).join('');
+}
+// quarter turns counter-clockwise (Cog's DRM rotation)
+const ROTATIONS = [[0, 'Landscape'], [1, 'Portrait'], [2, 'Landscape, flipped'], [3, 'Portrait, flipped']];
+function setRotation(v) {
+  confirmDo('Rotate the screen? The browser restarts.', ['rotation', 'set', String(v)]);
+}
+// battery: state refreshed every 10 s while the section is shown; the window is saved when a slider is released
+const SOURCES = { wall: 'wall adapter', pc: 'computer USB port', none: 'no charger' };
+async function loadBattery() {
+  const b = await tp(['battery', 'get']);
+  if (!b) return;
+  $('#batt-cap').firstChild.textContent = b.capacity + ' %';
+  $('#batt-state').textContent = `${b.status} · ${SOURCES[b.source] || b.source} · ${b.current_ma} mA`;
+  $('#batt-badge').textContent = b.held ? 'Charge paused (limit)' : '';
+  $('#batt-badge').className = 'badge' + (b.held ? ' warn' : '');
+  $('#batt-limit').classList.toggle('on', b.limit);
+  $('#batt-min').value = b.min; $('#batt-max').value = b.max; battLabels();
+  document.querySelectorAll('#batt-min, #batt-max').forEach(r => r.closest('.row').classList.toggle('na', !b.limit));
+  const c = await tp(['cpu', 'get']);
+  if (!c) return;
+  $('#cpu-boost').classList.toggle('on', c.boost);
+  $('#cpu-state').textContent = `Up to ${c.boost ? 1188 : 756} MHz · now ${c.cur_mhz.join(' / ')} MHz`;
+}
+$('#cpu-boost').onclick = () => tp(['cpu', 'boost', $('#cpu-boost').classList.contains('on') ? 'off' : 'on']).then(loadBattery);
+function battLabels() { $('#batt-min-v').textContent = $('#batt-min').value + ' %'; $('#batt-max-v').textContent = $('#batt-max').value + ' %'; }
+// keep stop >= start + 10 while dragging either slider
+$('#batt-min').oninput = () => { if (+$('#batt-max').value < +$('#batt-min').value + 10) $('#batt-max').value = +$('#batt-min').value + 10; battLabels(); };
+$('#batt-max').oninput = () => { if (+$('#batt-min').value > +$('#batt-max').value - 10) $('#batt-min').value = +$('#batt-max').value - 10; battLabels(); };
+document.querySelectorAll('#batt-min, #batt-max').forEach(r => r.onchange = () =>
+  tp(['battery', 'range', $('#batt-min').value, $('#batt-max').value]).then(loadBattery));
+$('#batt-limit').onclick = () => tp(['battery', 'limit', $('#batt-limit').classList.contains('on') ? 'off' : 'on']).then(loadBattery);
+setInterval(() => $('#battery').classList.contains('on') && loadBattery(), 10000);
+
+// brightness: live while dragging (throttled), saved on release
+let bTimer;
+$('#bright').oninput = e => { $('#bright-v').textContent = e.target.value + ' %';
+  clearTimeout(bTimer); bTimer = setTimeout(() => tp(['backlight', 'set', e.target.value]), 120); };
+// sound: volume live while dragging (throttled) and saved, mute switch
+async function loadSound() {
+  const v = await tp(['sound', 'get']);
+  if (!v) return;
+  $('#vol').value = v.volume; $('#vol-v').textContent = v.volume + ' %';
+  $('#mute').classList.toggle('on', v.mute);
+  $('#mic').value = v.mic_volume; $('#mic-v').textContent = v.mic_volume + ' %';
+  $('#mic-mute').classList.toggle('on', v.mic_mute);
+}
+// microphone: level live while dragging and saved, mute switch, test (record, level, playback)
+let mTimer;
+$('#mic').oninput = e => { $('#mic-v').textContent = e.target.value + ' %';
+  clearTimeout(mTimer); mTimer = setTimeout(() => tp(['sound', 'mic-volume', e.target.value]), 120); };
+$('#mic-mute').onclick = () => tp(['sound', 'mic-mute', $('#mic-mute').classList.contains('on') ? 'off' : 'on']).then(loadSound);
+$('#mic-test').onclick = async () => {
+  const t = await tp(['sound', 'mic-test']);
+  if (!t) return;
+  $('#mic-test').disabled = true; $('#mic-state').textContent = 'Recording: speak now';
+  $('#mic-bar').style.width = '0'; $('#mic-db').textContent = '';
+  setTimeout(async () => {
+    const l = await tp(['sound', 'mic-level']);
+    if (l && l.state === 'done') {
+      // -60 dB and below = empty bar, 0 dB (full scale) = full bar
+      $('#mic-bar').style.width = Math.max(0, Math.min(100, (l.peak_db + 60) * 100 / 60)) + '%';
+      $('#mic-db').textContent = l.peak_db + ' dB';
+      $('#mic-state').textContent = 'Playing the recording back';
+    } else {
+      $('#mic-state').textContent = 'The recording failed';
+    }
+    setTimeout(() => { $('#mic-test').disabled = false; $('#mic-state').textContent = 'Records 3 seconds, then plays them back'; },
+               t.seconds * 1000 + 500);
+  }, t.seconds * 1000 + 800);
+};
+// camera: one picture per call (tp writes /tmp/tp-cam.bmp, served as /cam.bmp); the live preview repeats it while the section is shown
+let camTimer, camBusy = false;
+async function camSnap() {
+  if (camBusy) return;
+  camBusy = true;
+  const r = await tp(['camera', 'snap']);
+  camBusy = false;
+  if (!r) { camLive(false); return; }
+  if (mockMode) { $('#cam-empty').textContent = 'No picture in the desktop review'; return; }
+  $('#cam-img').src = '/cam.bmp?t=' + Date.now();
+  $('#cam-img').classList.add('on'); $('#cam-empty').style.display = 'none';
+  $('#cam-state').textContent = `Aptina MT9M113, ${r.width}x${r.height}, ${r.ms} ms`;
+}
+function camLive(on) {
+  $('#cam-live').classList.toggle('on', on);
+  clearInterval(camTimer);
+  if (on) { camSnap(); camTimer = setInterval(() => $('#camera').classList.contains('on') ? camSnap() : camLive(false), 1200); }
+}
+$('#cam-snap').onclick = camSnap;
+$('#cam-live').onclick = () => camLive(!$('#cam-live').classList.contains('on'));
+async function loadCamera() {
+  const c = await tp(['camera', 'get']);
+  if (c && !c.present) { $('#cam-state').textContent = 'No camera found'; $('#cam-snap').disabled = true; }
+}
+let vTimer;
+$('#vol').oninput = e => { $('#vol-v').textContent = e.target.value + ' %';
+  clearTimeout(vTimer); vTimer = setTimeout(() => tp(['sound', 'volume', e.target.value]), 120); };
+$('#mute').onclick = () => tp(['sound', 'mute', $('#mute').classList.contains('on') ? 'off' : 'on']).then(loadSound);
+const cogFields = [
+  ['scale', '#cog-scale'], ['deviceScale', '#cog-device-scale'], ['bgColor', '#cog-bg'],
+  ['failure', '#cog-failure'], ['permissions', '#cog-permissions'],
+  ['docViewer', '#cog-doc'], ['language', '#cog-language'],
+];
+$('#cog-options').onsubmit = async e => {
+  e.preventDefault();
+  const apply = $('#cog-apply');
+  apply.disabled = true;
+  const values = cogFields.map(([, selector]) => {
+    const field = $(selector);
+    return field.type === 'checkbox' ? (field.checked ? 'on' : '') : field.value.trim();
+  });
+  const saved = await tp(['browser', 'set-options', ...values]);
+  if (!saved || mockMode) apply.disabled = false;
+};
+async function loadBrowser() {
+  const u = await tp(['url', 'get']);
+  if (u) $('#url').value = u.url;
+  const c = await tp(['browser', 'cache-size']);
+  if (c) $('#cache-size').textContent = (c.kb >= 1024 ? (c.kb / 1024).toFixed(1) + ' MB' : c.kb + ' kB') +
+    ' of cached files; logins and site settings are kept';
+  $('#cog-apply').disabled = true;
+  const options = await tp(['browser', 'options']);
+  if (options) {
+    cogFields.forEach(([key, selector]) => {
+      const field = $(selector);
+      if (field.type === 'checkbox') field.checked = options[key] === 'on';
+      else field.value = options[key] || '';
+    });
+    $('#cog-apply').disabled = false;
+  }
+}
+async function loadTime() {
+  const n = await tp(['ntp', 'status']);
+  if (n) {
+    $('#ntp').classList.toggle('on', n.on); $('#ntp-server').value = n.server;
+    $('#ntp-state').textContent = n.on ? (n.synced ? 'Synchronised with ' + n.server : 'Waiting for ' + n.server) : 'Off';
+    $('#manual').classList.toggle('na', n.on);
+  }
+  const z = await tp(['tz', 'list']);
+  if (z) { tzZones = z.zones; tzCur = z.tz; $('#tz').textContent = z.tz.replace(/_/g, ' '); }
+  const now = new Date(); $('#d').value = now.toISOString().slice(0, 10); $('#t').value = now.toTimeString().slice(0, 5);
+}
+function tick() { const d = new Date();
+  $('#clock').innerHTML = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
+    `<span class="sub">${d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>`; }
+setInterval(tick, 1000); tick();
+async function loadInfo() {
+  const i = await tp(['info']);
+  if (!i) return;
+  $('#info').innerHTML = Object.entries(i).filter(([k]) => k !== 'ok').map(([k, v]) =>
+    `<div class="row"><span class="label">${esc(k[0].toUpperCase() + k.slice(1))}</span><span class="val">${esc(v)}</span></div>`).join('');
+}
+
+let first = 'wifi'; try { first = localStorage.getItem('tpd.section') || first; } catch (e) {}
+show(first);
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Touch screen: ts_srv (userspace driver of the Cypress CY8CTMA395, rootfs/ts_srv) powers the controller, reads its raw
+# frames on /dev/ttyMSM2 and creates the "HPTouchpad" uinput touch screen, which udev/libinput (Cog) pick up.
+# Started before the browser. Log: /tmp/ts_srv.log. Debug: touch /mnt/media/touchpad/tsdebug (touch positions and rates in the log).
+# Sensor columns: all by default; a panel with dead edge electrodes lists its live ones in /mnt/media/touchpad/ts_columns
+# (one line, e.g. "7-33,36" on the first TouchPad).
+case "$1" in
+  start)
+    [ -x /usr/local/bin/ts_srv ] || exit 0
+    [ -f /mnt/media/touchpad/tsdebug ] && export TS_SRV_DEBUG=1
+    [ -s /mnt/media/touchpad/ts_columns ] && export TS_SRV_COLUMNS="$(head -n1 /mnt/media/touchpad/ts_columns | tr -d '\r')"
+    /usr/local/bin/ts_srv > /tmp/ts_srv.log 2>&1 &
+    # wait for the uinput device so that udev has tagged it before Cog starts
+    i=0
+    while [ $i -lt 20 ] && ! grep -q HPTouchpad /proc/bus/input/devices; do sleep 0.2; i=$((i+1)); done
+    udevadm settle -t 3 2>/dev/null
+    ;;
+  stop) pkill ts_srv 2>/dev/null ;;
+esac

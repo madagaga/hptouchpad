@@ -1,0 +1,27 @@
+#!/bin/sh
+# Connects wlan0 to a WPA/WPA2-PSK network and runs DHCP.
+# Usage: wifi-wpa <ssid> <passphrase>
+# The passphrase is only written to /tmp (RAM) and must never be stored in the repository.
+SSID="${1:?usage: wifi-wpa <ssid> <passphrase>}"
+PSK="${2:?usage: wifi-wpa <ssid> <passphrase>}"
+ifconfig wlan0 up
+mkdir -p /var/run/wpa_supplicant
+cat > /tmp/wpa.conf <<CONF
+ctrl_interface=/var/run/wpa_supplicant
+network={
+  ssid="$SSID"
+  psk="$PSK"
+  key_mgmt=WPA-PSK
+}
+CONF
+chmod 600 /tmp/wpa.conf
+killall wpa_supplicant 2>/dev/null
+sleep 1
+wpa_supplicant -B -i wlan0 -D nl80211 -c /tmp/wpa.conf
+i=0
+while [ $i -lt 30 ]; do
+  wpa_cli -i wlan0 status 2>/dev/null | grep -q "wpa_state=COMPLETED" && break
+  sleep 1; i=$((i+1))
+done
+wpa_cli -i wlan0 status 2>/dev/null | grep -E "wpa_state|ssid=|freq|key_mgmt"
+wifi-dhcp

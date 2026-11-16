@@ -1,0 +1,109 @@
+--- a/drivers/thermal/qcom/tsens.h
++++ b/drivers/thermal/qcom/tsens.h
+@@ -642,6 +642,7 @@
+ 
+ /* TSENS target */
+ extern struct tsens_plat_data data_8960;
++extern struct tsens_plat_data data_8660;
+ 
+ /* TSENS v0.1 targets */
+ extern struct tsens_plat_data data_8226, data_8909, data_8916, data_8939, data_8974, data_9607;
+--- a/drivers/thermal/qcom/tsens.c
++++ b/drivers/thermal/qcom/tsens.c
+@@ -1132,6 +1132,9 @@
+ 		.compatible = "qcom,msm8960-tsens",
+ 		.data = &data_8960,
+ 	}, {
++		.compatible = "qcom,msm8660-tsens",
++		.data = &data_8660,
++	}, {
+ 		.compatible = "qcom,msm8974-tsens",
+ 		.data = &data_8974,
+ 	}, {
+--- a/drivers/thermal/qcom/tsens-8960.c
++++ b/drivers/thermal/qcom/tsens-8960.c
+@@ -283,3 +283,84 @@
+ 	.feat		= &tsens_8960_feat,
+ 	.fields		= tsens_8960_regfields,
+ };
++
++/*
++ * MSM8660 (HP TouchPad): same block as the 8960 but only the sensor 0 is usable. The driver of the
++ * vendor kernel (drivers/thermal/msm_tsens.c) reads the calibration code at 30 C from the QFPROM word 0xBC
++ * (bits 23:16, a redundant copy in bits 31:24 wins when it is programmed), uses a slope of 0.702 C per code
++ * (1000 / 0.702 = 1424 codes per 1000 C in the units of tsens.c) and sets the CONFIG field of the control
++ * register to 1 ("found to be optimal").
++ */
++static u32 tsens_msm8660_slope[] = { 1424 };
++
++/* Thresholds written before the sensor is enabled, as the vendor driver does (codes): lower 0x50, upper 0xdf,
++ * min 0x38, max 0xff. */
++#define THRESHOLD_8660_INIT	((0xff << 24) | (0x38 << 16) | (0xdf << 8) | 0x50)
++
++static int init_8660(struct tsens_priv *priv)
++{
++	int ret;
++
++	ret = init_common(priv);
++	if (ret)
++		return ret;
++
++	/*
++	 * The threshold register is 0 after a reset: with a MAX threshold of 0 the hardware thermal trip of the
++	 * TSENS block cuts the power of the tablet as soon as the first conversion completes after the sensor is
++	 * enabled. The generic code only writes the real MIN/MAX thresholds after the sensor is enabled and the
++	 * thermal zone registered, which is too late (the tablet powers off a few seconds after boot).
++	 */
++	ret = regmap_write(priv->tm_map, THRESHOLD_ADDR, THRESHOLD_8660_INIT);
++	if (ret)
++		return ret;
++
++	return regmap_update_bits(priv->tm_map, CNTL_ADDR, CONFIG_MASK_8660,
++				  CONFIG_8660 << CONFIG_SHIFT_8660);
++}
++
++static int calibrate_8660(struct tsens_priv *priv)
++{
++	char *calib, *backup;
++	u32 p1[1] = { 0 };
++	int ret = 0;
++
++	calib = qfprom_read(priv->dev, "calib");
++	backup = qfprom_read(priv->dev, "calib_backup");
++
++	if (!IS_ERR(backup) && backup[0])
++		p1[0] = backup[0];
++	else if (!IS_ERR(calib) && calib[0])
++		p1[0] = calib[0];
++	else
++		ret = -ENODEV;
++
++	if (!IS_ERR(calib))
++		kfree(calib);
++	if (!IS_ERR(backup))
++		kfree(backup);
++	if (ret)
++		return ret;
++
++	priv->sensor[0].slope = tsens_msm8660_slope[0];
++	compute_intercept_slope(priv, p1, NULL, ONE_PT_CALIB);
++
++	return 0;
++}
++
++static const struct tsens_ops ops_8660 = {
++	.init		= init_8660,
++	.calibrate	= calibrate_8660,
++	.get_temp	= get_temp_common,
++	.enable		= enable_8960,
++	.disable	= disable_8960,
++	.suspend	= suspend_8960,
++	.resume		= resume_8960,
++};
++
++struct tsens_plat_data data_8660 = {
++	.num_sensors	= 1,
++	.ops		= &ops_8660,
++	.feat		= &tsens_8960_feat,
++	.fields		= tsens_8960_regfields,
++};

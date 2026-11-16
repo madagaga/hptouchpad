@@ -1,0 +1,17 @@
+#!/bin/sh
+# Settings panel (docs/SETTINGS-PANEL.md): BusyBox httpd serves /usr/share/tpd/www on 127.0.0.1:8080 only; Cog shows it with
+# `cogctl open http://127.0.0.1:8080/` (session bus of S90browser). Disabled by touching /mnt/media/touchpad/nopanel.
+# The Home button (triple press opens/closes the panel) and the screen sleep are handled by the tp daemon (S03power).
+case "$1" in
+  start)
+    [ -f /mnt/media/touchpad/nopanel ] && exit 0
+    # the only CGI: the tp binary itself (its CGI mode, rootfs/tp/cgi.c)
+    mkdir -p /usr/share/tpd/www/cgi-bin; ln -sf /usr/local/bin/tp /usr/share/tpd/www/cgi-bin/tp
+    # the camera snapshot of `tp camera snap` (written in /tmp), shown by the Camera page
+    ln -sf /tmp/tp-cam.bmp /usr/share/tpd/www/cam.bmp
+    # brightness saved by the panel
+    L=$(sed -n 's/^brightness=//p' /mnt/media/touchpad/tpd.conf 2>/dev/null | tail -n1); [ -n "$L" ] && tp backlight "$L" > /dev/null
+    busybox-extras httpd -p 127.0.0.1:8080 -h /usr/share/tpd/www
+    ;;
+  stop) pkill -f "httpd -p 127.0.0.1:8080" 2>/dev/null ;;
+esac

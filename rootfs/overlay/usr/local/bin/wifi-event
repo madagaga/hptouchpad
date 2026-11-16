@@ -1,0 +1,9 @@
+#!/bin/sh
+# wpa_cli action script (started by /etc/tp.d/S10wifi): $1 = interface, $2 = CONNECTED or DISCONNECTED.
+# On every connection: a fresh DHCP client in the background (renews the lease; /tmp/dhcp.script sets address, route and DNS).
+case "$2" in
+  CONNECTED)
+    pkill -f "udhcpc -i $1" 2>/dev/null
+    busybox udhcpc -i "$1" -b -t 10 -s /tmp/dhcp.script > /dev/null 2>&1
+    ;;
+esac

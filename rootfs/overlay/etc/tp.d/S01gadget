@@ -1,0 +1,20 @@
+#!/bin/sh
+# USB device mode through configfs: serial (ACM) + ethernet (ECM), as the initramfs does. Debug access.
+case "$1" in
+  start)
+    mount -t configfs none /sys/kernel/config 2>/dev/null
+    G=/sys/kernel/config/usb_gadget/g1
+    [ -d /sys/kernel/config/usb_gadget ] || exit 0
+    [ -d $G ] || {
+      mkdir -p $G && cd $G
+      echo 0x1d6b > idVendor; echo 0x0104 > idProduct
+      mkdir -p strings/0x409; echo "hptouchpad" > strings/0x409/product
+      mkdir -p configs/c.1 functions/ecm.usb0 functions/acm.GS0
+      echo full-speed > max_speed 2>/dev/null   # bulk transfers fail at high speed (see STATUS.md), same as the initramfs
+      ln -sf functions/ecm.usb0 configs/c.1/; ln -sf functions/acm.GS0 configs/c.1/
+      UDC=$(ls /sys/class/udc 2>/dev/null | head -n1)
+      [ -n "$UDC" ] && echo "$UDC" > UDC
+    }
+    ifconfig usb0 192.168.7.2 netmask 255.255.255.0 up 2>/dev/null
+    ;;
+esac

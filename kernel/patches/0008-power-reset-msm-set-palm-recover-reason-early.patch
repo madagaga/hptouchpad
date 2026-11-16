@@ -1,0 +1,57 @@
+--- a/drivers/power/reset/msm-poweroff.c
++++ b/drivers/power/reset/msm-poweroff.c
+@@ -53,3 +53,54 @@
+ 	},
+ };
+ builtin_platform_driver(msm_restart_driver);
++
++/*
++ * HP TouchPad: Palm restart reason, the IMEM word read by the bootloader (0x2A05F65C), values of the HP kernel
++ * (arch/arm/mach-msm/restart_stock.c).
++ *
++ * Bring-up aid: the "recover" reason is written as early as possible, so that any reset nobody asked for (watchdog
++ * bite after a hang, panic) lands in the USB recovery mode instead of booting another system, which would overwrite
++ * the RAM log of the crashed boot and need the buttons to come back. A clean reboot or power-off writes its own
++ * reason from a reboot notifier: "reboot" (the bootloader starts /boot/uImage, i.e. moboot), "shutdown" (the
++ * bootloader powers off), "recover" only when asked (reboot argument "recover" or "recovery").
++ */
++#include <linux/reboot.h>
++
++#define PALM_REASON_ADDR	0x2A05F65C
++#define PALM_REASON_SHUTDOWN	0x6f656d00
++#define PALM_REASON_RECOVER	0x6f656d11
++#define PALM_REASON_REBOOT	0x6f656d44
++
++static void msm_palm_reason(u32 reason)
++{
++	void __iomem *imem = ioremap(PALM_REASON_ADDR & PAGE_MASK, PAGE_SIZE);
++
++	if (!imem)
++		return;
++	writel(reason, imem + (PALM_REASON_ADDR & ~PAGE_MASK));
++	iounmap(imem);
++}
++
++static int msm_palm_reboot_notify(struct notifier_block *nb, unsigned long action, void *data)
++{
++	const char *cmd = data;
++
++	if (action == SYS_POWER_OFF || action == SYS_HALT)
++		msm_palm_reason(PALM_REASON_SHUTDOWN);
++	else if (cmd && (!strcmp(cmd, "recover") || !strcmp(cmd, "recovery")))
++		msm_palm_reason(PALM_REASON_RECOVER);
++	else
++		msm_palm_reason(PALM_REASON_REBOOT);
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block msm_palm_reboot_nb = {
++	.notifier_call = msm_palm_reboot_notify,
++};
++
++static int __init msm_set_palm_recover_reason(void)
++{
++	msm_palm_reason(PALM_REASON_RECOVER);
++	return register_reboot_notifier(&msm_palm_reboot_nb);
++}
++core_initcall(msm_set_palm_recover_reason);

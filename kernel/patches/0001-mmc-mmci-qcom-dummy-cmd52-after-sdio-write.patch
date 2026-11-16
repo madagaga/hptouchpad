@@ -1,0 +1,94 @@
+--- a/drivers/mmc/host/mmci.c	2026-10-15 12:36:24.818780148 +0000
++++ b/drivers/mmc/host/mmci.c	2026-10-15 12:36:24.822780510 +0000
+@@ -23,6 +23,8 @@
+ #include <linux/mmc/host.h>
+ #include <linux/mmc/card.h>
+ #include <linux/mmc/sd.h>
++#include <linux/mmc/sdio.h>
++#include <linux/iopoll.h>
+ #include <linux/mmc/slot-gpio.h>
+ #include <linux/amba/bus.h>
+ #include <linux/clk.h>
+@@ -1876,6 +1878,33 @@
+ 	return host->irq_action;
+ }
+ 
++/*
++ * Qualcomm SDCC quirk: after a CMD53 write the card may stay busy and the controller does not
++ * wait for it. Send a dummy CMD52 (function 0, read register 0, result ignored) with PROGENA and
++ * wait for PROGDONE (not for CMDRESPEND: the response comes before the end of the card busy phase),
++ * like the downstream msm_sdcc driver does before the next request.
++ */
++static void mmci_qcom_dummy_cmd52(struct mmci_host *host)
++{
++	void __iomem *base = host->base;
++	u32 status;
++
++	writel(0, base + MMCIARGUMENT);
++	writel(SD_IO_RW_DIRECT | host->variant->cmdreg_cpsm_enable |
++	       host->variant->cmdreg_srsp | MCI_CPSM_QCOM_PROGENA,
++	       base + MMCICOMMAND);
++
++	if (readl_poll_timeout_atomic(base + MMCISTATUS, status,
++				      status & (MCI_QCOM_PROGDONE | MCI_CMDTIMEOUT |
++						MCI_CMDCRCFAIL),
++				      1, 100000))
++		dev_warn_once(mmc_dev(host->mmc), "dummy CMD52 did not complete\n");
++
++	writel(MCI_QCOM_PROGDONE | MCI_CMDTIMEOUT | MCI_CMDCRCFAIL | MCI_CMDRESPEND,
++	       base + MMCICLEAR);
++	writel(0, base + MMCICOMMAND);
++}
++
+ static void mmci_request(struct mmc_host *mmc, struct mmc_request *mrq)
+ {
+ 	struct mmci_host *host = mmc_priv(mmc);
+@@ -1889,6 +1918,14 @@
+ 		return;
+ 	}
+ 
++	if (host->qcom_dummy52) {
++		if (host->qcom_dummy52_needed)
++			mmci_qcom_dummy_cmd52(host);
++		host->qcom_dummy52_needed = mrq->data &&
++					    (mrq->data->flags & MMC_DATA_WRITE) &&
++					    mrq->cmd->opcode == SD_IO_RW_EXTENDED;
++	}
++
+ 	spin_lock_irqsave(&host->lock, flags);
+ 
+ 	host->mrq = mrq;
+@@ -2174,6 +2211,8 @@
+ 	if (ret)
+ 		return ret;
+ 
++	host->qcom_dummy52 = of_property_read_bool(np, "qcom,dummy52-required");
++
+ 	if (of_property_read_bool(np, "st,sig-dir-dat0"))
+ 		host->pwr_reg_add |= MCI_ST_DATA0DIREN;
+ 	if (of_property_read_bool(np, "st,sig-dir-dat2"))
+--- a/drivers/mmc/host/mmci.h	2026-10-15 12:36:24.818780148 +0000
++++ b/drivers/mmc/host/mmci.h	2026-10-15 12:36:24.822780510 +0000
+@@ -162,6 +162,8 @@
+ #define MCI_ST_SDIOIT		(1 << 22)
+ #define MCI_ST_CEATAEND		(1 << 23)
+ #define MCI_ST_CARDBUSY		(1 << 24)
++/* Qualcomm: the card left its programming (busy) phase, set for commands sent with PROGENA */
++#define MCI_QCOM_PROGDONE	(1 << 23)
+ /* Extended status bits for the STM32 variants */
+ #define MCI_STM32_BUSYD0	BIT(20)
+ #define MCI_STM32_BUSYD0END	BIT(21)
+@@ -416,6 +418,13 @@
+ 	struct mmc_host		*mmc;
+ 	struct clk		*clk;
+ 	u8			singleirq:1;
++	/*
++	 * Qualcomm SDCC quirk (downstream "dummy52_required"): the controller does not wait for the
++	 * card to leave the busy state after a CMD53 write, so a dummy CMD52 sent with PROGENA is
++	 * inserted before the next request. Enabled with the "qcom,dummy52-required" DT property.
++	 */
++	u8			qcom_dummy52:1;
++	u8			qcom_dummy52_needed:1;
+ 
+ 	struct reset_control	*rst;
+ 
