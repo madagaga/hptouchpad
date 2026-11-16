@@ -2,8 +2,7 @@
 
 Everything below is either read from the stock webOS 3.0.5 (kernel 2.6.35-palm-tenderloin, over novacom, `scripts/collect-webos.sh`)
 or taken from the device tree of this repository ([kernel/dts/](../kernel/dts/)), which is checked on the tablet. Where a value comes
-from the HP / CodeAurora downstream sources only, it is said. Not repeated here: the investigation history ([history/](history/)) and
-the current state ([../STATUS.md](../STATUS.md)).
+from the HP / CodeAurora downstream sources only, it is said.
 
 ## SoC, memory, boot
 

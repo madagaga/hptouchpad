@@ -20,6 +20,8 @@ data/
 # Working notes of the owner and the agents: kept on disk, not versioned
 STATUS.md
 MEMORY.md
+docs/history/
+docs/BUILD-CLEANUP.md
 
 # Editor, OS and tool leftovers
 *.log

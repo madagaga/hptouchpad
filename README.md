@@ -18,7 +18,7 @@ adjustments (touch screen driver, one Cog module fix).
   (optional H.264 + audio RTSP server), one Cog module fix. WPE WebKit + Cog render full screen on the GPU.
 - **Install and recovery**: install next to webOS through moboot (`docs/FLASHING.md`), RAM boot without touching the flash
   (`scripts/cycle.sh`), serial and SSH remote shell, `debrick/` toolbox for a deeply discharged battery.
-- **Notes**: hardware description in `docs/HARDWARE.md`, the full investigation journal in `docs/history/`.
+- **Notes**: hardware description in `docs/HARDWARE.md`.
 
 ## What works
 
@@ -59,8 +59,6 @@ adjustments (touch screen driver, one Cog module fix).
   (`firmware/`, `BOARD_DATA=`, `ADRENO_FW=`, `VIDC_FW=`).
 - **Not yet checked**: the one-hour `tp-rtsp` run, VLC/ffplay playback, speech intelligibility.
 
-History and measurements: [docs/history/](docs/history/).
-
 ## Layout
 
 | Path | Role |
@@ -76,7 +74,7 @@ History and measurements: [docs/history/](docs/history/).
 | `kernel/touchpad.config` | Kconfig fragment applied on `qcom_defconfig` |
 | `initramfs/` | first-boot initramfs (screen shell, USB gadget, Wi-Fi/Bluetooth tools, the `tp` command) |
 | `rootfs/` | what goes on top of Alpine: `overlay/` (BusyBox init, `/etc/tp.d` start scripts), `ts_srv/` (touch screen driver), `tp/` (the `tp` program), `bluetooth/` (BlueCore PSR), `cog-patches/` |
-| `docs/` | [HARDWARE.md](docs/HARDWARE.md): the tablet's hardware, addresses, GPIOs, rails; [FLASHING.md](docs/FLASHING.md): eMMC layout, what to keep, steps to install Linux on the flash; [SETTINGS-PANEL.md](docs/SETTINGS-PANEL.md): the `tp` daemon and the settings panel; [RTSP-SERVER.md](docs/RTSP-SERVER.md): `tp-rtsp`; [BUILD-CLEANUP.md](docs/BUILD-CLEANUP.md), [PUBLIC-RELEASE.md](docs/PUBLIC-RELEASE.md); `history/`: the investigation journal |
+| `docs/` | [HARDWARE.md](docs/HARDWARE.md): the tablet's hardware, addresses, GPIOs, rails; [FLASHING.md](docs/FLASHING.md): eMMC layout, what to keep, steps to install Linux on the flash; [SETTINGS-PANEL.md](docs/SETTINGS-PANEL.md): the `tp` daemon and the settings panel; [RTSP-SERVER.md](docs/RTSP-SERVER.md): `tp-rtsp`; [PUBLIC-RELEASE.md](docs/PUBLIC-RELEASE.md) |
 | `debrick/` | RAM-booted toolbox to force the charge of a deeply discharged tablet |
 
 The kernel sources and objects live in a BuildKit cache (not on the host filesystem).
@@ -97,8 +95,6 @@ Settings are environment variables: `RELEASE=1` (no developer key in the image),
 `ADRENO_FW=webos`, `TOUCHPAD_PASSWORD`, `KERNEL_VERSION` (with `KERNEL_SHA256`), `KERNEL_BASE`, `DTB_NAME`, `FIRMWARE_DIR`, `SSH_PUBKEY`.
 The image has a user `touchpad` (password `alpine` unless `TOUCHPAD_PASSWORD`, `doas` to root); without `RELEASE=1` the project key
 (`secrets/touchpad_ed25519.pub`) also lets root in over SSH. The ARM stages run under QEMU when the host cannot run 32-bit code.
-Details, measurements and what was tested on a tablet: [docs/BUILD-CLEANUP.md](docs/BUILD-CLEANUP.md).
-
 `uImage` goes to the flash through moboot (`docs/FLASHING.md`); `rootfs-alpine.ext4` is copied to the webOS media partition as
 `touchpad/rootfs-alpine.ext4` and selected by `touchpad/rootfile`. `scripts/cycle.sh out/kernel/uImage` boots a kernel in RAM without writing anything.
 
