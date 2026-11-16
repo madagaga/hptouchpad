@@ -4,7 +4,7 @@ Goal: mainline Linux kernel + WPE WebKit/Cog on the HP TouchPad.
 Everything is built in Docker: nothing is installed on the host (except `usbipd-win` to pass the tablet to Docker).
 The project is the kernel and the device tree; the userspace is an Alpine Linux root filesystem made of prebuilt packages (apk), with a few
 adjustments (touch screen driver, one Cog module fix).
-## What was done
+## What is implemented
 
 - **Build chain**: one multi-stage `Dockerfile` (Alpine) builds the kernel, the initramfs, the root filesystem and our small programs;
   `./build.sh` is the only entry point, nothing is installed on the host.
@@ -74,7 +74,7 @@ adjustments (touch screen driver, one Cog module fix).
 | `kernel/touchpad.config` | Kconfig fragment applied on `qcom_defconfig` |
 | `initramfs/` | first-boot initramfs (screen shell, USB gadget, Wi-Fi/Bluetooth tools, the `tp` command) |
 | `rootfs/` | what goes on top of Alpine: `overlay/` (BusyBox init, `/etc/tp.d` start scripts), `ts_srv/` (touch screen driver), `tp/` (the `tp` program), `bluetooth/` (BlueCore PSR), `cog-patches/` |
-| `docs/` | [HARDWARE.md](docs/HARDWARE.md): the tablet's hardware, addresses, GPIOs, rails; [FLASHING.md](docs/FLASHING.md): eMMC layout, what to keep, steps to install Linux on the flash; [SETTINGS-PANEL.md](docs/SETTINGS-PANEL.md): the `tp` daemon and the settings panel; [RTSP-SERVER.md](docs/RTSP-SERVER.md): `tp-rtsp`; [PUBLIC-RELEASE.md](docs/PUBLIC-RELEASE.md) |
+| `docs/` | [HARDWARE.md](docs/HARDWARE.md): the tablet's hardware, addresses, GPIOs, rails; [FLASHING.md](docs/FLASHING.md): eMMC layout, what to keep, steps to install Linux on the flash; [SETTINGS-PANEL.md](docs/SETTINGS-PANEL.md): the `tp` daemon and the settings panel; [RTSP-SERVER.md](docs/RTSP-SERVER.md): `tp-rtsp`; [FIRMWARE.md](docs/FIRMWARE.md): firmware, files read from your tablet, licences |
 | `debrick/` | RAM-booted toolbox to force the charge of a deeply discharged tablet |
 
 The kernel sources and objects live in a BuildKit cache (not on the host filesystem).

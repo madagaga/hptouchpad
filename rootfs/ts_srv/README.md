@@ -9,7 +9,7 @@ touch points and creates the `HPTouchpad` uinput touchscreen (multitouch protoco
 
 Changes from the original are listed at the top of `ts_srv.c` and `digitizer.c`, plus: the sensor columns used can be
 restricted with `TS_SRV_COLUMNS` (all 40 by default; `7-33,36` on the first TouchPad, whose edge electrodes are dead, set through
-`/mnt/media/touchpad/ts_columns` by `S80touch`), the coordinates are calibrated on the panel (STATUS.md, "Touch screen works"), and a held
+`/mnt/media/touchpad/ts_columns` by `S80touch`), the coordinates are calibrated on the panel (see the comments of `ts_srv.c`), and a held
 touch survives short dips of the signal. `ts_srv_set` (finger/stylus mode client) is not ported: the control socket is
 still served on `/run/tsdriver`.
 

@@ -26,7 +26,7 @@ RTSP=1 VIDC_FW=webos DTB_NAME=qcom-apq8060-hp-touchpad-kms ./build.sh rootfs   #
 VIDC_FW=webos DTB_NAME=qcom-apq8060-hp-touchpad-kms ./build.sh tp-rtsp          # the binary alone: out/tp-rtsp/tp-rtsp
 ```
 
-Without `RTSP=1` the image is unchanged (checked: the only difference with `RTSP=1` is that one file). To try it on a running
+Without `RTSP=1` the image is unchanged (the only difference with `RTSP=1` is that one file). To try it on a running
 tablet, copy the binary: `ssh root@<tablet> dd of=/usr/local/bin/tp-rtsp bs=64k < out/tp-rtsp/tp-rtsp`, then `chmod 755` it.
 Needs a kernel with the camera, vidc (firmware, `VIDC_FW=webos`) and the microphone capture link.
 
@@ -50,7 +50,7 @@ Things to know: the camera starts about once in four with near-black frames at a
 frames in 1.5 s) and restarts the camera, up to three times. The microphone buffer holds only two 128 ms periods; the process
 runs at nice -10 so that the loop is never late (without it audio overruns happened every 1-2 minutes).
 
-## Alternative: go2rtc + ffmpeg (test setup of 2026-11-13)
+## Alternative: go2rtc + ffmpeg
 
 Not part of the image; 61 MB installed by hand with `apk add go2rtc v4l-utils` (pulls ffmpeg), lost at the next rootfs flash.
 `go2rtc.yaml` serves the same URLs (audio AAC instead of PCMA) plus a web page on port 1984 and WebRTC/MSE players.
@@ -63,5 +63,4 @@ ssh root@<tablet> "cat > /etc/go2rtc/go2rtc.yaml" < scripts\rtsp\go2rtc.yaml
 go2rtc -config /etc/go2rtc/go2rtc.yaml > /tmp/go2rtc.log 2>&1 &
 ```
 
-ffmpeg starts at the first client and stops with the last one; the camera and the microphone serve one stream at a time. Needs the
-camera start fix of 2026-11-13 (older kernels fail about half of the camera starts).
+ffmpeg starts at the first client and stops with the last one; the camera and the microphone serve one stream at a time.

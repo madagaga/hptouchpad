@@ -15,7 +15,7 @@ toolbox breaks that loop. Nothing is written to the flash.
 ## Booting the toolbox
 Two ways, depending on the mode the tablet can reach. Both load the toolbox in RAM only.
 
-**DFU mode** (`0830:8070`, Home + Power + Volume Up; the only mode a flat tablet reached here). novacom does not
+**DFU mode** (`0830:8070`, Home + Power + Volume Up; the mode a flat tablet reaches). novacom does not
 talk to this mode, so it goes through `dfu-util` and `fastboot`:
 ```sh
 dfu-util -d 0830:8070 -R -D moboot-dfu-v004   # moboot comes up as fastboot 18d1:d00d
@@ -24,7 +24,7 @@ fastboot flash bootmem TPToolbox-serial
 (`sh debrick/boot-toolbox.sh` runs the same two commands.)
 
 **Recovery mode** (`0830:8071`, Volume Up + Power, big USB logo), if the tablet still gets there: novacom can load
-the same image directly (not tried on the flat unit):
+the same image directly (not tried on a flat unit):
 ```sh
 novacom boot mem:// < TPToolbox-serial
 ```
@@ -42,5 +42,5 @@ terminal (`picocom -b 115200 /dev/ttyACM0`, PuTTY) and log in as `root` (no pass
    echo 41 > /sys/class/gpio/export 2>/dev/null
    echo 1 > /sys/class/gpio/gpio41/value
    ```
-   A few seconds later the battery shows up: `PRESENT=1` and its voltage (2.36 V here).
-3. Leave it plugged in (one night was enough here). Do **not** switch to the USB mode (DCM high, 500 mA): the tablet browns out.
+   A few seconds later the battery shows up: `PRESENT=1` and its voltage.
+3. Leave it plugged in (one night was enough). Do **not** switch to the USB mode (DCM high, 500 mA): the tablet browns out.

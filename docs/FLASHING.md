@@ -26,7 +26,7 @@ The bootloader (`bootie`) starts `/boot/uImage`, which is moboot. moboot shows o
 kernel. Our initramfs mounts the webOS `media` volume (the USB drive seen by a PC, `/media/internal` under webOS), reads the first line of
 `touchpad/rootfile` and boots the ext4 image it names. webOS and its data stay as they are.
 
-Checked on a 32 GB TouchPad with CyanogenMod (2026-10-29): moboot starts our kernel from `/boot/uImage.Linux`.
+moboot starts our kernel from `/boot/uImage.Linux`.
 
 ## 2. Before you start
 
@@ -198,8 +198,9 @@ cat out/artifacts/uImage | scripts/tablet-ssh.sh -i <ip> \
 first (`scripts/cycle.sh <uImage>`) before writing it.
 
 **Root filesystem**: the running Linux uses `rootfs-alpine.ext4` as its root, so it cannot overwrite it, and the media volume
-is usually too full for a second 620 MB copy. Replace the file from webOS instead (the bootie recovery mode only starts an image
-in RAM and cannot write files; our initramfs has no Wi-Fi and its USB network does not work through usbipd):
+is usually too full for a second 620 MB copy. The simplest way is the USB drive mode of the tablet: the media volume then appears on
+the PC as a FAT32 drive ("HP TOUCHPAD"), and `touchpad/rootfs-alpine.ext4` can be replaced by a plain file copy (about 9 minutes).
+Check the checksum of the copied file against `SHA256SUMS`. Or replace the file from webOS:
 
 1. From Linux, set the rootfs aside so that a Linux boot stops in the initramfs instead of using a half-written file:
    `mv /mnt/media/touchpad/rootfile /mnt/media/touchpad/rootfile.off`.
